@@ -1,0 +1,16 @@
+[package]
+name = "sim_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy_ecs = "0.18.1"
+glam = "0.32.1"
+iceoryx2 = "0.8.1"
+rust-spice = "0.7.8"
+zmq = "0.10.0"
+
+[features]
+default = []
+thermodynamics = []
+synthetic_sensors = []
