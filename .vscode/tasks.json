@@ -1,27 +1,33 @@
 {
   "version": "2.0.0",
   "tasks": [
+    // ────────────────────────────────────────────────────────────────────
+    // BUILD
+    // ────────────────────────────────────────────────────────────────────
     {
-      "label": "sim: cargo build (workspace)",
+      "label": "build: workspace (debug)",
       "type": "cargo",
       "command": "build",
       "args": ["--workspace"],
       "problemMatcher": ["$rustc"],
       "group": { "kind": "build", "isDefault": true },
-      "presentation": { "panel": "dedicated", "reveal": "always" }
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true },
+      "detail": "Compile sim_core + sim_server in dev mode (default build task — Ctrl+Shift+B)"
     },
     {
-      "label": "sim: cargo build (release)",
+      "label": "build: workspace (release)",
       "type": "cargo",
       "command": "build",
       "args": ["--workspace", "--release"],
       "problemMatcher": ["$rustc"],
-      "group": "build"
+      "group": "build",
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true },
+      "detail": "Optimised release build — use for high-warp simulation"
     },
     {
-      "label": "sim: cargo test (all features minus spice)",
+      "label": "build: sim_core with thermodynamics",
       "type": "cargo",
-      "command": "test",
+      "command": "build",
       "args": [
         "-p",
         "sim_core",
@@ -30,31 +36,33 @@
         "thermodynamics"
       ],
       "problemMatcher": ["$rustc"],
-      "group": { "kind": "test", "isDefault": true }
+      "group": "build",
+      "detail": "Build sim_core with the optional thermal-dissipation model enabled"
     },
     {
-      "label": "sim: cargo test (sim_core only)",
+      "label": "build: sim_core with all features (requires CSPICE)",
       "type": "cargo",
-      "command": "test",
-      "args": ["-p", "sim_core", "--no-default-features"],
+      "command": "build",
+      "args": ["-p", "sim_core", "--features", "full"],
       "problemMatcher": ["$rustc"],
-      "group": "test"
+      "group": "build",
+      "detail": "Full integration stack — needs CSPICE_DIR + zeromq + iceoryx installed"
     },
     {
-      "label": "sim: cargo clippy",
+      "label": "build: check (fast, no codegen)",
       "type": "cargo",
-      "command": "clippy",
-      "args": ["--workspace", "--all-targets", "--no-default-features"],
-      "problemMatcher": ["$rustc"]
+      "command": "check",
+      "args": ["--workspace", "--all-targets"],
+      "problemMatcher": ["$rustc"],
+      "group": "build",
+      "detail": "Fast typecheck without producing artifacts"
     },
+
+    // ────────────────────────────────────────────────────────────────────
+    // RUN
+    // ────────────────────────────────────────────────────────────────────
     {
-      "label": "sim: cargo fmt",
-      "type": "cargo",
-      "command": "fmt",
-      "args": ["--all"]
-    },
-    {
-      "label": "sim: run server (debug)",
+      "label": "run: server (debug, warp 60×)",
       "type": "shell",
       "command": "cargo",
       "args": [
@@ -71,12 +79,16 @@
         "--telemetry-stride",
         "20"
       ],
+      "options": {
+        "env": { "RUST_LOG": "info,sim_server=debug,sim_core=info" }
+      },
       "problemMatcher": ["$rustc"],
-      "presentation": { "panel": "dedicated", "reveal": "always" },
-      "isBackground": true
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true },
+      "isBackground": true,
+      "detail": "Start the simulation server in debug mode at 60× warp"
     },
     {
-      "label": "sim: run server (release)",
+      "label": "run: server (release, warp 1000×)",
       "type": "shell",
       "command": "cargo",
       "args": [
@@ -92,22 +104,45 @@
         "--warp",
         "1000",
         "--telemetry-stride",
-        "50"
+        "100"
       ],
+      "options": {
+        "env": { "RUST_LOG": "info,sim_server=info" }
+      },
+      "problemMatcher": ["$rustc"],
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true },
+      "isBackground": true,
+      "detail": "Optimised release server at 1000× warp — use this for real demos"
+    },
+    {
+      "label": "run: server (no gravity, debugging propulsion)",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "run",
+        "-p",
+        "sim_server",
+        "--",
+        "--bind",
+        "127.0.0.1:8080",
+        "--dt",
+        "0.01",
+        "--warp",
+        "10",
+        "--no-gravity",
+        "--telemetry-stride",
+        "5"
+      ],
+      "options": {
+        "env": { "RUST_LOG": "debug,sim_server=trace,sim_core=trace" }
+      },
       "problemMatcher": ["$rustc"],
       "presentation": { "panel": "dedicated", "reveal": "always" },
-      "isBackground": true
+      "isBackground": true,
+      "detail": "Gravity-free run for isolating propulsion / attitude bugs"
     },
     {
-      "label": "dashboard: npm install",
-      "type": "shell",
-      "command": "npm",
-      "args": ["install", "--no-audit", "--no-fund"],
-      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
-      "problemMatcher": []
-    },
-    {
-      "label": "dashboard: dev server",
+      "label": "run: dashboard (dev)",
       "type": "shell",
       "command": "npm",
       "args": ["run", "dev"],
@@ -126,20 +161,210 @@
           ],
           "background": {
             "activeOnStart": true,
-            "beginsPattern": "starting the development server",
-            "endsPattern": "(ready|compiled|started server)"
+            "beginsPattern": ".",
+            "endsPattern": "(Ready in|compiled|started server)"
           }
         }
       ],
+      "presentation": { "panel": "dedicated", "reveal": "always" },
+      "detail": "Next.js dev server on http://localhost:3000"
+    },
+    {
+      "label": "run: full stack (server + dashboard)",
+      "dependsOn": ["run: server (debug, warp 60×)", "run: dashboard (dev)"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "detail": "Launch sim_server and the dashboard dev server in parallel"
+    },
+
+    // ────────────────────────────────────────────────────────────────────
+    // STOP / CLEAN
+    // ────────────────────────────────────────────────────────────────────
+    {
+      "label": "kill: sim_server processes",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "pkill -f 'target/.*sim_server' 2>/dev/null; pkill -f 'sim_server --bind' 2>/dev/null; echo 'sim_server processes killed (if any)'"
+      ],
+      "problemMatcher": [],
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "detail": "Force-kill any running sim_server instance bound to 127.0.0.1"
+    },
+    {
+      "label": "kill: dashboard dev server",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "pkill -f 'next dev' 2>/dev/null; echo 'next dev killed (if any)'"
+      ],
+      "problemMatcher": [],
+      "presentation": { "panel": "shared", "reveal": "always" }
+    },
+    {
+      "label": "clean: cargo target",
+      "type": "cargo",
+      "command": "clean",
+      "args": ["--workspace"],
+      "problemMatcher": [],
+      "detail": "Remove all cargo build artifacts"
+    },
+    {
+      "label": "clean: dashboard build",
+      "type": "shell",
+      "command": "bash",
+      "args": ["-c", "rm -rf web_dashboard/.next web_dashboard/out && echo 'cleaned'"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+
+    // ────────────────────────────────────────────────────────────────────
+    // TEST
+    // ────────────────────────────────────────────────────────────────────
+    {
+      "label": "test: sim_core (default)",
+      "type": "cargo",
+      "command": "test",
+      "args": ["-p", "sim_core", "--no-default-features"],
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true },
+      "detail": "Unit + integration tests with no optional features (default test task)"
+    },
+    {
+      "label": "test: sim_core (+ thermodynamics)",
+      "type": "cargo",
+      "command": "test",
+      "args": [
+        "-p",
+        "sim_core",
+        "--no-default-features",
+        "--features",
+        "thermodynamics"
+      ],
+      "problemMatcher": ["$rustc"],
+      "group": "test",
+      "detail": "Includes thermal-system tests"
+    },
+    {
+      "label": "test: workspace (everything)",
+      "type": "cargo",
+      "command": "test",
+      "args": [
+        "--workspace",
+        "--no-default-features",
+        "--features",
+        "sim_core/thermodynamics"
+      ],
+      "problemMatcher": ["$rustc"],
+      "group": "test",
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true }
+    },
+    {
+      "label": "test: E2E websocket smoke test",
+      "type": "cargo",
+      "command": "test",
+      "args": [
+        "-p",
+        "sim_server",
+        "--test",
+        "ws_smoke",
+        "--",
+        "--ignored",
+        "--nocapture"
+      ],
+      "problemMatcher": ["$rustc"],
+      "group": "test",
+      "detail": "Launches server, opens WS, asserts telemetry + commands work"
+    },
+    {
+      "label": "test: with verbose output",
+      "type": "cargo",
+      "command": "test",
+      "args": [
+        "-p",
+        "sim_core",
+        "--no-default-features",
+        "--features",
+        "thermodynamics",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "problemMatcher": ["$rustc"],
+      "group": "test",
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true },
+      "detail": "Show println! output, run serially for clearer logs"
+    },
+
+    // ────────────────────────────────────────────────────────────────────
+    // QUALITY / LINT
+    // ────────────────────────────────────────────────────────────────────
+    {
+      "label": "lint: cargo clippy",
+      "type": "cargo",
+      "command": "clippy",
+      "args": [
+        "--workspace",
+        "--all-targets",
+        "--no-default-features",
+        "--features",
+        "sim_core/thermodynamics",
+        "--",
+        "-W",
+        "clippy::pedantic",
+        "-A",
+        "clippy::module_name_repetitions"
+      ],
+      "problemMatcher": ["$rustc"],
+      "presentation": { "panel": "dedicated", "reveal": "always", "clear": true }
+    },
+    {
+      "label": "lint: cargo fmt --check",
+      "type": "cargo",
+      "command": "fmt",
+      "args": ["--all", "--check"],
+      "problemMatcher": [],
+      "detail": "Verify formatting without modifying files"
+    },
+    {
+      "label": "fmt: cargo fmt (apply)",
+      "type": "cargo",
+      "command": "fmt",
+      "args": ["--all"],
+      "problemMatcher": [],
+      "detail": "Apply rustfmt to the entire workspace"
+    },
+    {
+      "label": "lint: dashboard eslint",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "lint"],
+      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
+      "problemMatcher": [],
       "presentation": { "panel": "dedicated", "reveal": "always" }
     },
     {
-      "label": "dashboard: tsc --noEmit",
+      "label": "lint: dashboard tsc --noEmit",
       "type": "shell",
       "command": "npx",
       "args": ["--no-install", "tsc", "--noEmit"],
       "options": { "cwd": "${workspaceFolder}/web_dashboard" },
       "problemMatcher": ["$tsc"]
+    },
+
+    // ────────────────────────────────────────────────────────────────────
+    // DASHBOARD
+    // ────────────────────────────────────────────────────────────────────
+    {
+      "label": "dashboard: npm install",
+      "type": "shell",
+      "command": "npm",
+      "args": ["install", "--no-audit", "--no-fund"],
+      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
+      "problemMatcher": []
     },
     {
       "label": "dashboard: production build (static export)",
@@ -147,23 +372,51 @@
       "command": "npm",
       "args": ["run", "build"],
       "options": { "cwd": "${workspaceFolder}/web_dashboard" },
-      "problemMatcher": ["$tsc"]
+      "problemMatcher": ["$tsc"],
+      "detail": "Produces `web_dashboard/out/` static bundle"
     },
+
+    // ────────────────────────────────────────────────────────────────────
+    // DEBUG / SMOKE
+    // ────────────────────────────────────────────────────────────────────
     {
-      "label": "sim: full stack (server + dashboard)",
-      "dependsOn": ["sim: run server (debug)", "dashboard: dev server"],
-      "dependsOrder": "parallel",
-      "problemMatcher": []
-    },
-    {
-      "label": "sim: smoke test snapshot",
+      "label": "smoke: GET /health + /snapshot",
       "type": "shell",
       "command": "bash",
       "args": [
         "-c",
-        "curl --max-time 2 -s http://127.0.0.1:8080/health && echo && curl --max-time 2 -s http://127.0.0.1:8080/snapshot | head -c 600 && echo"
+        "echo '== /health ==' && curl --max-time 2 -s http://127.0.0.1:8080/health && echo && echo '== /snapshot ==' && curl --max-time 2 -s http://127.0.0.1:8080/snapshot | head -c 800 && echo"
       ],
-      "problemMatcher": []
+      "problemMatcher": [],
+      "presentation": { "panel": "shared", "reveal": "always" },
+      "detail": "Curl-based liveness check against the running sim_server"
+    },
+    {
+      "label": "smoke: command — set warp to 100×",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "curl --max-time 2 -s http://127.0.0.1:8080/snapshot | python3 -c 'import sys,json; d=json.load(sys.stdin); print(\"current warp:\", d[\"warp\"])'"
+      ],
+      "problemMatcher": [],
+      "presentation": { "panel": "shared", "reveal": "always" }
+    },
+
+    // ────────────────────────────────────────────────────────────────────
+    // META
+    // ────────────────────────────────────────────────────────────────────
+    {
+      "label": "everything: build, test, lint",
+      "dependsOn": [
+        "build: workspace (debug)",
+        "test: workspace (everything)",
+        "lint: cargo clippy",
+        "lint: dashboard tsc --noEmit"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "detail": "Pre-PR sanity gate: build + all tests + clippy + tsc"
     }
   ]
 }

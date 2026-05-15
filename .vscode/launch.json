@@ -2,15 +2,11 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug sim_server",
+      "name": "Debug: sim_server (warp 60×)",
       "type": "lldb",
       "request": "launch",
       "cargo": {
-        "args": [
-          "build",
-          "--bin=sim_server",
-          "--package=sim_server"
-        ],
+        "args": ["build", "--bin=sim_server", "--package=sim_server"],
         "filter": { "name": "sim_server", "kind": "bin" }
       },
       "args": [
@@ -23,12 +19,48 @@
         "--telemetry-stride",
         "20"
       ],
+      "env": { "RUST_LOG": "info,sim_server=debug,sim_core=debug", "RUST_BACKTRACE": "1" },
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Debug: sim_server (no gravity, warp 10×)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=sim_server", "--package=sim_server"],
+        "filter": { "name": "sim_server", "kind": "bin" }
+      },
+      "args": [
+        "--bind",
+        "127.0.0.1:8080",
+        "--dt",
+        "0.01",
+        "--warp",
+        "10",
+        "--no-gravity",
+        "--telemetry-stride",
+        "5"
+      ],
+      "env": { "RUST_LOG": "trace", "RUST_BACKTRACE": "full" },
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Debug: sim_server (custom args — prompts)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=sim_server", "--package=sim_server"],
+        "filter": { "name": "sim_server", "kind": "bin" }
+      },
+      "args": ["${input:serverArgs}"],
       "env": { "RUST_LOG": "info,sim_server=debug" },
       "cwd": "${workspaceFolder}",
       "sourceLanguages": ["rust"]
     },
     {
-      "name": "Debug sim_core unit tests",
+      "name": "Debug: sim_core unit tests",
       "type": "lldb",
       "request": "launch",
       "cargo": {
@@ -49,7 +81,28 @@
       "sourceLanguages": ["rust"]
     },
     {
-      "name": "Debug sim_core integration tests",
+      "name": "Debug: sim_core unit tests (single test — prompts)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "-p",
+          "sim_core",
+          "--no-default-features",
+          "--features",
+          "thermodynamics",
+          "--lib"
+        ],
+        "filter": { "kind": "lib", "name": "sim_core" }
+      },
+      "args": ["${input:testFilter}", "--exact", "--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Debug: sim_core integration tests",
       "type": "lldb",
       "request": "launch",
       "cargo": {
@@ -71,12 +124,64 @@
       "sourceLanguages": ["rust"]
     },
     {
-      "name": "Debug dashboard (Chrome attach)",
+      "name": "Debug: sim_server E2E websocket test",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "-p",
+          "sim_server",
+          "--test",
+          "ws_smoke"
+        ],
+        "filter": { "kind": "test", "name": "ws_smoke" }
+      },
+      "args": ["--ignored", "--nocapture"],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Debug: dashboard (Chrome)",
       "type": "chrome",
       "request": "launch",
       "url": "http://localhost:3000",
       "webRoot": "${workspaceFolder}/web_dashboard/src",
-      "preLaunchTask": "dashboard: dev server"
+      "preLaunchTask": "run: dashboard (dev)"
+    },
+    {
+      "name": "Debug: dashboard (Firefox)",
+      "type": "firefox",
+      "request": "launch",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}/web_dashboard/src",
+      "preLaunchTask": "run: dashboard (dev)"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug: full stack (server + dashboard)",
+      "configurations": [
+        "Debug: sim_server (warp 60×)",
+        "Debug: dashboard (Chrome)"
+      ],
+      "stopAll": true,
+      "presentation": { "hidden": false, "order": 1 }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testFilter",
+      "type": "promptString",
+      "description": "Test name filter (e.g. dynamics::tests::rk4_constant_force_matches_analytic_kinematics)",
+      "default": "dynamics::tests::"
+    },
+    {
+      "id": "serverArgs",
+      "type": "promptString",
+      "description": "sim_server CLI args (single string, space-separated)",
+      "default": "--bind 127.0.0.1:8080 --dt 0.01 --warp 100 --telemetry-stride 10"
     }
   ]
 }
