@@ -2,15 +2,36 @@
 name = "sim_core"
 version = "0.1.0"
 edition = "2024"
+description = "Deterministic 6-DOF interplanetary simulation core for autonomy testing"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 bevy_ecs = "0.18.1"
-glam = "0.32.1"
-iceoryx2 = "0.8.1"
-rust-spice = "0.7.8"
-zmq = "0.10.0"
+glam = { version = "0.32.1", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+
+# Native / external integrations — opt-in so the core library
+# builds and tests cleanly on machines without CSPICE / zeromq / iceoryx.
+rust-spice = { version = "0.7.8", optional = true }
+zmq = { version = "0.10.0", optional = true }
+iceoryx2 = { version = "0.8.1", optional = true }
 
 [features]
 default = []
+
+# Physical model extensions
 thermodynamics = []
 synthetic_sensors = []
+
+# External integrations (each pulls a heavy native dependency)
+spice = ["dep:rust-spice"]
+zmq_bridge = ["dep:zmq"]
+iceoryx = ["dep:iceoryx2"]
+
+# Convenience: full integration stack
+full = ["spice", "zmq_bridge", "iceoryx", "thermodynamics", "synthetic_sensors"]
+
+[dev-dependencies]
+approx = "0.5"

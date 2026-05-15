@@ -1,0 +1,169 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "sim: cargo build (workspace)",
+      "type": "cargo",
+      "command": "build",
+      "args": ["--workspace"],
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "panel": "dedicated", "reveal": "always" }
+    },
+    {
+      "label": "sim: cargo build (release)",
+      "type": "cargo",
+      "command": "build",
+      "args": ["--workspace", "--release"],
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "sim: cargo test (all features minus spice)",
+      "type": "cargo",
+      "command": "test",
+      "args": [
+        "-p",
+        "sim_core",
+        "--no-default-features",
+        "--features",
+        "thermodynamics"
+      ],
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "test", "isDefault": true }
+    },
+    {
+      "label": "sim: cargo test (sim_core only)",
+      "type": "cargo",
+      "command": "test",
+      "args": ["-p", "sim_core", "--no-default-features"],
+      "problemMatcher": ["$rustc"],
+      "group": "test"
+    },
+    {
+      "label": "sim: cargo clippy",
+      "type": "cargo",
+      "command": "clippy",
+      "args": ["--workspace", "--all-targets", "--no-default-features"],
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "sim: cargo fmt",
+      "type": "cargo",
+      "command": "fmt",
+      "args": ["--all"]
+    },
+    {
+      "label": "sim: run server (debug)",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "run",
+        "-p",
+        "sim_server",
+        "--",
+        "--bind",
+        "127.0.0.1:8080",
+        "--dt",
+        "0.05",
+        "--warp",
+        "60",
+        "--telemetry-stride",
+        "20"
+      ],
+      "problemMatcher": ["$rustc"],
+      "presentation": { "panel": "dedicated", "reveal": "always" },
+      "isBackground": true
+    },
+    {
+      "label": "sim: run server (release)",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "run",
+        "--release",
+        "-p",
+        "sim_server",
+        "--",
+        "--bind",
+        "127.0.0.1:8080",
+        "--dt",
+        "0.01",
+        "--warp",
+        "1000",
+        "--telemetry-stride",
+        "50"
+      ],
+      "problemMatcher": ["$rustc"],
+      "presentation": { "panel": "dedicated", "reveal": "always" },
+      "isBackground": true
+    },
+    {
+      "label": "dashboard: npm install",
+      "type": "shell",
+      "command": "npm",
+      "args": ["install", "--no-audit", "--no-fund"],
+      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
+      "problemMatcher": []
+    },
+    {
+      "label": "dashboard: dev server",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "pattern": [
+            {
+              "regexp": "ERROR in (.*):(\\d+):(\\d+) (.*)",
+              "file": 1,
+              "line": 2,
+              "column": 3,
+              "message": 4
+            }
+          ],
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": "starting the development server",
+            "endsPattern": "(ready|compiled|started server)"
+          }
+        }
+      ],
+      "presentation": { "panel": "dedicated", "reveal": "always" }
+    },
+    {
+      "label": "dashboard: tsc --noEmit",
+      "type": "shell",
+      "command": "npx",
+      "args": ["--no-install", "tsc", "--noEmit"],
+      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "dashboard: production build (static export)",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build"],
+      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "sim: full stack (server + dashboard)",
+      "dependsOn": ["sim: run server (debug)", "dashboard: dev server"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "sim: smoke test snapshot",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "curl --max-time 2 -s http://127.0.0.1:8080/health && echo && curl --max-time 2 -s http://127.0.0.1:8080/snapshot | head -c 600 && echo"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

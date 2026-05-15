@@ -1,0 +1,82 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug sim_server",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=sim_server",
+          "--package=sim_server"
+        ],
+        "filter": { "name": "sim_server", "kind": "bin" }
+      },
+      "args": [
+        "--bind",
+        "127.0.0.1:8080",
+        "--dt",
+        "0.05",
+        "--warp",
+        "60",
+        "--telemetry-stride",
+        "20"
+      ],
+      "env": { "RUST_LOG": "info,sim_server=debug" },
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Debug sim_core unit tests",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "-p",
+          "sim_core",
+          "--no-default-features",
+          "--features",
+          "thermodynamics",
+          "--lib"
+        ],
+        "filter": { "kind": "lib", "name": "sim_core" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Debug sim_core integration tests",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "-p",
+          "sim_core",
+          "--no-default-features",
+          "--features",
+          "thermodynamics",
+          "--test",
+          "integration"
+        ],
+        "filter": { "kind": "test", "name": "integration" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "sourceLanguages": ["rust"]
+    },
+    {
+      "name": "Debug dashboard (Chrome attach)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}/web_dashboard/src",
+      "preLaunchTask": "dashboard: dev server"
+    }
+  ]
+}
