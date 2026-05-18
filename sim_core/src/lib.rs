@@ -41,9 +41,9 @@ pub use autopilot::{
 };
 pub use clock::{SimClock, SimTime};
 pub use components::{
-    CommandedWrench, PropulsionDrive, PropulsionType, RigidBody, Spacecraft,
+    CommandedWrench, PropulsionDrive, PropulsionType, RadiationModel, RigidBody, Spacecraft,
 };
-pub use dynamics::{dynamics_system, DynamicsConfig};
+pub use dynamics::{dynamics_system, srp_force, DynamicsConfig, SRP_AT_1AU_N_M2};
 pub use ephemeris::{ephemeris_refresh_system, BodyParams, BodyState, EphemerisCache};
 pub use ipc::{AutonomyBridge, lockstep_sync_system, CommandPacket, TickTelemetry};
 pub use mission::Mission;

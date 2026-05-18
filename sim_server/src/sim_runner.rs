@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sim_core::ephemeris::{naif, AU, MU_SUN};
 use sim_core::{
     CommandedWrench, EphemerisCache, ExpanseSim, Mission, PropulsionDrive, PropulsionType,
-    RigidBody, SimClock, SimConfig, Spacecraft,
+    RadiationModel, RigidBody, SimClock, SimConfig, Spacecraft,
 };
 
 use crate::thrust_controller::{thrust_controller_system, ThrustController};
@@ -91,6 +91,18 @@ pub enum ControlCommand {
     /// mission is set; switching to Sandbox cuts the autopilot.
     #[serde(rename = "set_mode")]
     SetMode { mode: String },
+    /// One-shot mission kickoff. Equivalent to:
+    ///   set_mission { source, target }   (only if provided)
+    ///   set_mode "mission"
+    ///   stage_at_source
+    ///   set_autopilot { engaged: true, accel_g }
+    /// Sent atomically so the operator can't race past stage-before-engage.
+    #[serde(rename = "start_mission")]
+    StartMission {
+        source: Option<i32>,
+        target: Option<i32>,
+        accel_g: Option<f64>,
+    },
     /// Enable / disable the onboard EKF navigation filter. When enabled it
     /// initialises from ground truth (with operator-set uncertainty) and
     /// thereafter operates solely off the synthetic sensor pack.
@@ -323,6 +335,11 @@ fn spawn_default_spacecraft(sim: &mut ExpanseSim) -> Entity {
                 max_thrust: 5.0e7,
                 ..Default::default()
             },
+            // Sun-facing area of ~50 m² with cR=1.6 — a small SRP perturbation
+            // that's correct in physics, negligible in magnitude versus the
+            // brachistochrone drive (~1×10⁻⁹ m/s² at 1 AU). Visible to the
+            // EKF as a tiny systematic residual during long coast phases.
+            RadiationModel { area_m2: 50.0, cr: 1.6 },
         ))
         .id()
 }
@@ -634,6 +651,42 @@ fn apply_command(
                 if let Some(s) = init_sigma_v_m_s { nf.init_sigma_v_m_s = s.max(0.0); }
                 if want_reset {
                     nf.initialized = false;
+                }
+            }
+        }
+        ControlCommand::StartMission { source, target, accel_g } => {
+            // 1) Update the mission roster if either endpoint was provided.
+            if source.is_some() || target.is_some() {
+                if let Some(mut m) = sim.world.get_resource_mut::<Mission>() {
+                    if let Some(s) = source { m.source_body = Some(s); }
+                    if let Some(t) = target { m.target_body = Some(t); }
+                }
+            }
+            // 2) Switch to Mission mode.
+            if let Some(mut state) = sim.world.get_resource_mut::<sim_core::SimModeState>() {
+                state.mode = sim_core::SimMode::Mission;
+            }
+            // 3) Stage spacecraft at source.
+            let source_id = sim.world.get_resource::<Mission>().and_then(|m| m.source_body);
+            if let Some(src) = source_id {
+                if let Some(cache) = sim.world.get_resource::<EphemerisCache>() {
+                    if let Some(state) = cache.get(src) {
+                        if let Ok(mut entity) = sim.world.get_entity_mut(spacecraft_entity) {
+                            if let Some(mut rb) = entity.get_mut::<RigidBody>() {
+                                rb.position = state.position;
+                                rb.velocity = state.velocity;
+                                rb.attitude = glam::DQuat::IDENTITY;
+                                rb.angular_velocity = DVec3::ZERO;
+                            }
+                        }
+                    }
+                }
+            }
+            // 4) Engage autopilot at the requested accel.
+            if let Some(mut ap) = sim.world.get_resource_mut::<sim_core::Autopilot>() {
+                ap.engaged = true;
+                if let Some(g) = accel_g {
+                    ap.accel_g = g.max(0.0);
                 }
             }
         }

@@ -137,6 +137,12 @@ export type ControlCommand =
     }
   | { type: 'set_mode'; mode: SimMode }
   | {
+      type: 'start_mission';
+      source?: number | null;
+      target?: number | null;
+      accel_g?: number;
+    }
+  | {
       type: 'set_nav_filter';
       enabled: boolean;
       init_sigma_r_m?: number;

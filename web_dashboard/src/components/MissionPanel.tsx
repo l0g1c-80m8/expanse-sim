@@ -1,6 +1,7 @@
 'use client';
 
-import { Rocket, Target as TargetIcon } from 'lucide-react';
+import { useState } from 'react';
+import { Play, Rocket, Target as TargetIcon } from 'lucide-react';
 import type {
   BodySnapshot,
   ControlCommand,
@@ -16,11 +17,14 @@ interface Props {
 export function MissionPanel({ mission, bodies, send }: Props) {
   // Sun isn't a useful source/target — exclude it from the picker.
   const choices = bodies.filter((b) => b.name !== 'Sun');
+  const [accelG, setAccelG] = useState(1.0);
 
   const update = (
     source: number | null,
     target: number | null,
   ) => send({ type: 'set_mission', source, target });
+
+  const ready = mission.source != null && mission.target != null;
 
   return (
     <aside className="pointer-events-auto w-80 bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4 text-xs font-mono space-y-3 shadow-xl">
@@ -55,13 +59,48 @@ export function MissionPanel({ mission, bodies, send }: Props) {
       <button
         onClick={() => send({ type: 'stage_at_source' })}
         disabled={mission.source == null}
-        className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 disabled:opacity-30 disabled:cursor-not-allowed border border-emerald-500/40 text-emerald-200 rounded-lg py-2 text-xs uppercase tracking-wider transition-colors"
+        className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-30 disabled:cursor-not-allowed border border-emerald-500/30 text-emerald-200 rounded-lg py-1.5 text-[10px] uppercase tracking-wider transition-colors"
         title="Reposition the spacecraft to the source body's current orbit"
       >
         Stage at source
       </button>
 
-      {mission.source != null && mission.target != null && (
+      <div className="border-t border-white/10 pt-3 space-y-2">
+        <label className="flex items-center gap-2">
+          <span className="text-slate-400 w-12">accel</span>
+          <input
+            type="range"
+            min={0.1}
+            max={5.0}
+            step={0.1}
+            value={accelG}
+            onChange={(e) => setAccelG(Number(e.target.value))}
+            className="flex-1 accent-cyan-400"
+          />
+          <span className="text-cyan-200 w-12 text-right">
+            {accelG.toFixed(1)} g
+          </span>
+        </label>
+
+        <button
+          onClick={() =>
+            send({
+              type: 'start_mission',
+              source: mission.source ?? undefined,
+              target: mission.target ?? undefined,
+              accel_g: accelG,
+            })
+          }
+          disabled={!ready}
+          className="w-full flex items-center justify-center gap-2 bg-cyan-500/25 hover:bg-cyan-500/35 disabled:opacity-30 disabled:cursor-not-allowed border border-cyan-500/50 text-cyan-100 rounded-lg py-2 text-xs uppercase tracking-wider transition-colors"
+          title="Switch to Mission mode, stage at source, and engage autopilot in one shot"
+        >
+          <Play className="w-3.5 h-3.5 fill-current" />
+          Plan &amp; Run
+        </button>
+      </div>
+
+      {ready && (
         <TransitEstimate
           source={bodies.find((b) => b.id === mission.source)}
           target={bodies.find((b) => b.id === mission.target)}

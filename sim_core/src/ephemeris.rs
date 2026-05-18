@@ -388,6 +388,14 @@ impl EphemerisCache {
     /// Net gravity from every body in the cache at `position` (m) and time `t` (s).
     /// `t` is used only to decide whether to refresh; cache currency is
     /// the caller's responsibility for performance reasons.
+    ///
+    /// Outside a body's radius: standard inverse-square law.
+    /// Inside a body's radius: uniform-density interior model — gravity
+    /// magnitude grows linearly with `r` from zero at the centre to `GM/R²`
+    /// at the surface. This is what the shell theorem gives for a uniform
+    /// solid sphere and, crucially, **eliminates the 1/r² singularity**
+    /// that previously turned a spacecraft staged at a planet's
+    /// heliocentric position into a 10⁸ m/s² rocket inside RK4 substeps.
     pub fn gravity_at(&self, position: DVec3, _t: f64) -> DVec3 {
         let inner = self.inner.read().unwrap();
         let mut a = DVec3::ZERO;
@@ -395,11 +403,20 @@ impl EphemerisCache {
             if let Some(s) = inner.states.get(&b.id) {
                 let r_vec = s.position - position;
                 let r2 = r_vec.length_squared();
+                // Below 1 m the direction is numerically meaningless; drop.
                 if r2 < 1.0 {
                     continue;
                 }
                 let r_mag = r2.sqrt();
-                a += r_vec * (b.mu / (r2 * r_mag));
+                let factor = if r_mag >= b.radius {
+                    // Exterior: GM / r³, applied as factor · r_vec.
+                    b.mu / (r_mag * r_mag * r_mag)
+                } else {
+                    // Interior (uniform-density shell theorem):
+                    // |a| = GM·r / R³, direction toward centre.
+                    b.mu / (b.radius * b.radius * b.radius)
+                };
+                a += r_vec * factor;
             }
         }
         a
@@ -585,6 +602,56 @@ mod tests {
         cache.refresh(60.0 * 86_400.0); // 60 days later
         let earth_t = cache.get(naif::EARTH).unwrap();
         assert!((earth_0.position - earth_t.position).length() > 1e6);
+    }
+
+    #[test]
+    fn gravity_inside_a_planet_is_bounded() {
+        // Regression: previously, a spacecraft staged at Earth's exact
+        // heliocentric position experienced a 10⁸ m/s² acceleration during
+        // RK4 substeps that probed positions a few hundred metres off
+        // Earth's centre. The interior model must cap acceleration at
+        // ≤ Earth's surface gravity (~9.8 m/s²) plus solar contribution.
+        let cache = EphemerisCache::with_default_bodies();
+        let earth = cache.get(naif::EARTH).unwrap().position;
+        // Sample 100 points inside Earth at random offsets.
+        for i in 0..100 {
+            let theta = (i as f64) * 0.1;
+            let phi = (i as f64) * 0.07;
+            let off = DVec3::new(theta.sin() * phi.cos(), theta.cos(), phi.sin())
+                * 5.0e6; // 5000 km — well inside Earth's 6371 km radius
+            let pos = earth + off;
+            let a = cache.gravity_at(pos, 0.0);
+            // Interior |a| ≤ GM_earth / R_earth² = ~9.8 m/s², plus a tiny
+            // solar contribution (~6e-3 m/s²) plus minor planet pulls.
+            // 20 m/s² is a comfortable upper bound.
+            assert!(
+                a.length() < 20.0,
+                "interior gravity at offset {:.0} m: {} m/s²",
+                off.length(),
+                a.length(),
+            );
+        }
+    }
+
+    #[test]
+    fn gravity_at_planet_surface_matches_surface_g() {
+        // Earth surface acceleration should be ~9.8 m/s².
+        let cache = EphemerisCache::with_default_bodies();
+        let earth_state = cache.get(naif::EARTH).unwrap();
+        let earth_params = cache
+            .bodies()
+            .into_iter()
+            .find(|b| b.id == naif::EARTH)
+            .unwrap();
+        let surface = earth_state.position + DVec3::X * earth_params.radius;
+        let a = cache.gravity_at(surface, 0.0);
+        // Earth's pull dominates at the surface; |a| ≈ 9.8 m/s² with a
+        // small solar / planetary perturbation.
+        assert!(
+            (a.length() - 9.8).abs() < 0.5,
+            "surface gravity {} m/s² off expected 9.8",
+            a.length(),
+        );
     }
 
     #[test]

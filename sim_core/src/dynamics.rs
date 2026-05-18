@@ -9,8 +9,8 @@ use bevy_ecs::prelude::*;
 use glam::{DMat3, DQuat, DVec3};
 
 use crate::clock::SimTime;
-use crate::components::{CommandedWrench, PropulsionDrive, RigidBody};
-use crate::ephemeris::EphemerisCache;
+use crate::components::{CommandedWrench, PropulsionDrive, RadiationModel, RigidBody};
+use crate::ephemeris::{EphemerisCache, AU};
 
 /// Configuration controlling which forces are summed into the equations of
 /// motion. Anything not listed here lives in `CommandedWrench`.
@@ -20,6 +20,10 @@ pub struct DynamicsConfig {
     /// ephemeris cache to each rigid body. Disable for unit tests that check
     /// pure inertial motion.
     pub apply_gravity: bool,
+    /// If true, the dynamics system applies solar radiation pressure to any
+    /// rigid body that carries a `RadiationModel` component. Toggleable so
+    /// tests can isolate one perturbation at a time.
+    pub apply_srp: bool,
     /// Standard gravitational parameter for the central body (Sun, m³/s²) used
     /// when no ephemeris cache is registered. Defaults to GM_sun.
     pub fallback_mu: f64,
@@ -29,9 +33,34 @@ impl Default for DynamicsConfig {
     fn default() -> Self {
         Self {
             apply_gravity: true,
+            apply_srp: true,
             fallback_mu: 1.327_124_400_18e20, // GM_sun, m³/s²
         }
     }
+}
+
+/// Solar radiation pressure at 1 AU (N/m²). Derived from the solar constant
+/// (≈ 1361 W/m² at 1 AU) divided by c.
+pub const SRP_AT_1AU_N_M2: f64 = 4.563e-6;
+
+/// Solar radiation pressure force (N) acting on a flat plate of area `A`
+/// with radiation coefficient `cR`, located at inertial position `position`
+/// (measured from the Sun at the origin). The force is radially outward.
+///
+/// This is the standard "cannonball" SRP model — adequate for cruise-phase
+/// nav-filter benchmarking. High-fidelity attitude-aware SRP would integrate
+/// over the spacecraft's geometry; out of scope here.
+pub fn srp_force(position: DVec3, model: RadiationModel) -> DVec3 {
+    let r2 = position.length_squared();
+    if r2 < 1.0 || model.area_m2 <= 0.0 || model.cr <= 0.0 {
+        return DVec3::ZERO;
+    }
+    let r_mag = r2.sqrt();
+    let r_hat = position / r_mag;
+    // Scale by (AU/r)² to keep the units intuitive (p₀ is defined at 1 AU).
+    let scale = (AU * AU) / r2;
+    let mag = SRP_AT_1AU_N_M2 * scale * model.area_m2 * model.cr;
+    r_hat * mag
 }
 
 /// Net gravitational acceleration (m/s²) on a probe at `position` (meters,
@@ -61,6 +90,7 @@ fn acceleration(
     rb: &RigidBody,
     cmd: CommandedWrench,
     prop_force_inertial: DVec3,
+    radiation: Option<RadiationModel>,
     t: f64,
     cache: Option<&EphemerisCache>,
     cfg: &DynamicsConfig,
@@ -69,7 +99,13 @@ fn acceleration(
     if cfg.apply_gravity {
         a += gravity_at(position, t, cache, cfg.fallback_mu);
     }
-    a += (cmd.force + prop_force_inertial) / rb.mass.max(1e-12);
+    let mut force_sum = cmd.force + prop_force_inertial;
+    if cfg.apply_srp {
+        if let Some(model) = radiation {
+            force_sum += srp_force(position, model);
+        }
+    }
+    a += force_sum / rb.mass.max(1e-12);
     a
 }
 
@@ -82,6 +118,7 @@ fn rk4_translational(
     rb: &mut RigidBody,
     cmd: CommandedWrench,
     prop_force_inertial: DVec3,
+    radiation: Option<RadiationModel>,
     t: f64,
     dt: f64,
     cache: Option<&EphemerisCache>,
@@ -90,25 +127,25 @@ fn rk4_translational(
     let p0 = rb.position;
     let v0 = rb.velocity;
 
-    let a1 = acceleration(p0, rb, cmd, prop_force_inertial, t, cache, cfg);
+    let a1 = acceleration(p0, rb, cmd, prop_force_inertial, radiation, t, cache, cfg);
     let k1_p = v0;
     let k1_v = a1;
 
     let p2 = p0 + k1_p * (dt * 0.5);
     let v2 = v0 + k1_v * (dt * 0.5);
-    let a2 = acceleration(p2, rb, cmd, prop_force_inertial, t + dt * 0.5, cache, cfg);
+    let a2 = acceleration(p2, rb, cmd, prop_force_inertial, radiation, t + dt * 0.5, cache, cfg);
     let k2_p = v2;
     let k2_v = a2;
 
     let p3 = p0 + k2_p * (dt * 0.5);
     let v3 = v0 + k2_v * (dt * 0.5);
-    let a3 = acceleration(p3, rb, cmd, prop_force_inertial, t + dt * 0.5, cache, cfg);
+    let a3 = acceleration(p3, rb, cmd, prop_force_inertial, radiation, t + dt * 0.5, cache, cfg);
     let k3_p = v3;
     let k3_v = a3;
 
     let p4 = p0 + k3_p * dt;
     let v4 = v0 + k3_v * dt;
-    let a4 = acceleration(p4, rb, cmd, prop_force_inertial, t + dt, cache, cfg);
+    let a4 = acceleration(p4, rb, cmd, prop_force_inertial, radiation, t + dt, cache, cfg);
     let k4_p = v4;
     let k4_v = a4;
 
@@ -149,13 +186,18 @@ pub fn dynamics_system(
     sim_time: Res<SimTime>,
     cfg: Res<DynamicsConfig>,
     cache: Option<Res<EphemerisCache>>,
-    mut query: Query<(&mut RigidBody, &mut CommandedWrench, Option<&PropulsionDrive>)>,
+    mut query: Query<(
+        &mut RigidBody,
+        &mut CommandedWrench,
+        Option<&PropulsionDrive>,
+        Option<&RadiationModel>,
+    )>,
 ) {
     let t = sim_time.time;
     let dt = sim_time.dt;
     let cache_ref = cache.as_deref();
 
-    for (mut rb, mut wrench, drive) in query.iter_mut() {
+    for (mut rb, mut wrench, drive, radiation) in query.iter_mut() {
         // The propulsion system has already pushed its inertial force into
         // CommandedWrench, but Brachistochrone needs no separate channel — it
         // burns through the same path. We split it out here only to allow the
@@ -175,7 +217,17 @@ pub fn dynamics_system(
             torque: wrench.torque,
         };
 
-        rk4_translational(&mut rb, cmd_only, prop_force_inertial, t, dt, cache_ref, &cfg);
+        let radiation_copy = radiation.copied();
+        rk4_translational(
+            &mut rb,
+            cmd_only,
+            prop_force_inertial,
+            radiation_copy,
+            t,
+            dt,
+            cache_ref,
+            &cfg,
+        );
 
         // Rotational dynamics: external torque (cmd.torque) lives in the inertial
         // frame; rotate into the body frame for Euler's equation.
@@ -249,6 +301,7 @@ mod tests {
                 &mut rb,
                 CommandedWrench::default(),
                 DVec3::ZERO,
+                None,
                 0.0,
                 dt,
                 None,
@@ -279,6 +332,7 @@ mod tests {
                 &mut rb,
                 CommandedWrench { force, torque: DVec3::ZERO },
                 DVec3::ZERO,
+                None,
                 0.0,
                 dt,
                 None,
@@ -317,6 +371,7 @@ mod tests {
                 &mut rb,
                 CommandedWrench::default(),
                 DVec3::ZERO,
+                None,
                 t,
                 dt,
                 None,
@@ -328,6 +383,102 @@ mod tests {
         // Energy drift over a quarter orbit should be well under 0.1 %.
         let drift = ((e1 - e0) / e0).abs();
         assert!(drift < 1e-3, "energy drift too large: {}", drift);
+    }
+
+    #[test]
+    fn srp_force_is_radially_outward_at_1au() {
+        let model = RadiationModel { area_m2: 10.0, cr: 1.5 };
+        // Place spacecraft at +x = 1 AU.
+        let pos = DVec3::new(AU, 0.0, 0.0);
+        let f = srp_force(pos, model);
+        // Direction: +x (outward).
+        assert!(f.x > 0.0, "SRP must push outward, got {:?}", f);
+        assert!(f.y.abs() < 1e-12);
+        assert!(f.z.abs() < 1e-12);
+        // Magnitude: p₀ · A · cR at 1 AU.
+        let expected = SRP_AT_1AU_N_M2 * 10.0 * 1.5;
+        assert_relative_eq!(f.length(), expected, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn srp_force_scales_as_inverse_square() {
+        let model = RadiationModel { area_m2: 10.0, cr: 1.5 };
+        let f_1au = srp_force(DVec3::new(AU, 0.0, 0.0), model).length();
+        let f_2au = srp_force(DVec3::new(2.0 * AU, 0.0, 0.0), model).length();
+        assert_relative_eq!(f_2au, f_1au / 4.0, epsilon = 1e-12);
+        let f_5au = srp_force(DVec3::new(5.0 * AU, 0.0, 0.0), model).length();
+        assert_relative_eq!(f_5au, f_1au / 25.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn srp_disabled_by_dynamics_config_yields_no_force() {
+        // Spawn one entity, attach RadiationModel, but disable SRP via config.
+        // The orbital energy at constant gravity should be the same as
+        // without SRP for a short interval.
+        let mut world = World::new();
+        world.insert_resource(SimTime::new(1.0));
+        world.insert_resource(DynamicsConfig {
+            apply_gravity: false,
+            apply_srp: false,
+            ..Default::default()
+        });
+        let id = world
+            .spawn((
+                RigidBody {
+                    position: DVec3::new(AU, 0.0, 0.0),
+                    velocity: DVec3::ZERO,
+                    mass: 1000.0,
+                    ..Default::default()
+                },
+                CommandedWrench::default(),
+                RadiationModel { area_m2: 1.0e6, cr: 2.0 }, // exaggerated
+            ))
+            .id();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(dynamics_system);
+        for _ in 0..100 {
+            schedule.run(&mut world);
+        }
+        let rb = world.entity(id).get::<RigidBody>().unwrap();
+        // With everything off, the ship should not have moved.
+        assert!(rb.velocity.length() < 1e-12);
+        assert_relative_eq!(rb.position.x, AU, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn srp_enabled_with_exaggerated_area_moves_the_ship_outward() {
+        // Use an outrageously large area so the integration over 1000 s gives
+        // a measurable Δv. Disable gravity to isolate SRP.
+        let mut world = World::new();
+        world.insert_resource(SimTime::new(1.0));
+        world.insert_resource(DynamicsConfig {
+            apply_gravity: false,
+            apply_srp: true,
+            ..Default::default()
+        });
+        let id = world
+            .spawn((
+                RigidBody {
+                    position: DVec3::new(AU, 0.0, 0.0),
+                    velocity: DVec3::ZERO,
+                    mass: 1.0, // 1 kg — large accel for visible drift
+                    ..Default::default()
+                },
+                CommandedWrench::default(),
+                RadiationModel { area_m2: 1.0e6, cr: 2.0 },
+            ))
+            .id();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(dynamics_system);
+        for _ in 0..1000 {
+            schedule.run(&mut world);
+        }
+        let rb = world.entity(id).get::<RigidBody>().unwrap();
+        // a = F/m = (p₀·A·cR)/m = 4.56e-6 · 1e6 · 2 / 1 ≈ 9.1 m/s². Over 1000 s
+        // that's ~4.5 km of drift in +x. Test the sign and order of magnitude.
+        assert!(rb.position.x > AU + 1.0e3, "expected outward drift, got {}", rb.position.x);
+        assert!(rb.velocity.x > 1.0, "expected outward velocity build-up, got {}", rb.velocity.x);
+        assert!(rb.position.y.abs() < 1.0); // no cross-axis drift
     }
 
     #[test]

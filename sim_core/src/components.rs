@@ -119,6 +119,33 @@ pub struct Spacecraft {
     pub id: u32,
 }
 
+/// Optional solar-radiation-pressure model. Attach to a spacecraft and the
+/// dynamics integrator adds a small radially-outward force from the Sun.
+///
+/// Force magnitude at heliocentric distance r:
+///     F = p₀ · (AU/r)² · A · cR
+/// where p₀ ≈ 4.56 × 10⁻⁶ N/m² is the solar radiation pressure at 1 AU,
+/// `A` is the effective cross-sectional area (m²), and `cR` is the radiation
+/// coefficient (1.0 = full absorption, 2.0 = perfect specular reflection;
+/// typical spacecraft ≈ 1.3 – 1.8 with multi-layer insulation).
+#[derive(Component, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RadiationModel {
+    /// Effective sun-facing cross-section (m²).
+    pub area_m2: f64,
+    /// Radiation coefficient (dimensionless).
+    pub cr: f64,
+}
+
+impl Default for RadiationModel {
+    fn default() -> Self {
+        // ~10 m² with cR=1.5 is a reasonable starting point for a small
+        // crewed transit vehicle. For a 250 t Rocinante this gives an SRP
+        // acceleration of ~2.7×10⁻¹⁰ m/s² at 1 AU — physically correct
+        // but small enough that gravity dominates by 12 orders of magnitude.
+        Self { area_m2: 10.0, cr: 1.5 }
+    }
+}
+
 /// Optional thermodynamic model for an engine / hull pair.
 #[cfg(feature = "thermodynamics")]
 #[derive(Component, Debug, Clone, Serialize, Deserialize)]
