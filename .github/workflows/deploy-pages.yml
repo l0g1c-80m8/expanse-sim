@@ -14,11 +14,6 @@ name: Deploy dashboard to GitHub Pages
 on:
   push:
     branches: [develop, main]
-    paths:
-      # Only rebuild when the dashboard or this workflow changes — the Rust
-      # crates don't contribute to the published bundle.
-      - "web_dashboard/**"
-      - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
 # Grant the workflow the minimum permissions for Pages deployment.
