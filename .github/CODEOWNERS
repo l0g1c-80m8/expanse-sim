@@ -1,0 +1,26 @@
+# CODEOWNERS — https://docs.github.com/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+#
+# Lines are processed in order; the last matching pattern wins. Listed users
+# are auto-requested for review on PRs that touch matching paths and gate
+# any branch-protection rule that requires code-owner review.
+#
+# Add additional reviewers by username (e.g. `@username`) or by team
+# (`@org/team-name`). Order from least to most specific.
+
+# Catch-all owner — everything not matched below is owned by the maintainer.
+*                               @l0g1c-80m8
+
+# Rust simulation core (physics, ECS, ephemeris, autopilot, sensors).
+/sim_core/                      @l0g1c-80m8
+
+# Rust simulation server (axum, websocket, IPC bridges).
+/sim_server/                    @l0g1c-80m8
+
+# Web dashboard (Next.js, Three.js, React UI).
+/web_dashboard/                 @l0g1c-80m8
+
+# CI / infra / community files — change with care, requires explicit review.
+/.github/                       @l0g1c-80m8
+/.vscode/                       @l0g1c-80m8
+/CODEOWNERS                     @l0g1c-80m8
+/LICENSE                        @l0g1c-80m8

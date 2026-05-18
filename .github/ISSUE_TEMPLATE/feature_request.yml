@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose new functionality or an improvement.
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are most useful when they describe a *problem you
+        want to solve*, not just an implementation you want to see. Help us
+        understand the user-visible behaviour first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use-case or pain point. Who hits it, when, and why current behaviour falls short.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: One or two paragraphs sketching the intended behaviour, the API surface, or the UI flow.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you weigh? Why did this option win?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      multiple: true
+      options:
+        - sim_core (physics, ECS, ephemeris, autopilot, sensors)
+        - sim_server (axum / WebSocket / IPC)
+        - web_dashboard (UI, Three.js)
+        - CI / tooling
+        - Documentation
+        - Other / unknown
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Determinism / compatibility
+      options:
+        - label: This change preserves the existing determinism contract (`dt` invariant, deterministic schedule).
+        - label: This is a breaking change to the WebSocket protocol or public API.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links to references, prior art, sketches, anything that helps the maintainers understand the proposal.

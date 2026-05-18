@@ -1,115 +1,99 @@
-# Prerequisites
-*.d
+# ────────────────────────────────────────────────────────────────────────
+# Rust  (sim_core, sim_server)
+# ────────────────────────────────────────────────────────────────────────
+target/
+**/*.rs.bk
+*.profraw
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# ────────────────────────────────────────────────────────────────────────
+# Node.js / Next.js  (web_dashboard)
+# Duplicated from web_dashboard/.gitignore as a defensive net — keeps build
+# artifacts out of the index even if commands are run from the workspace
+# root or another Node app is added later.
+# ────────────────────────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+**/out/
+.pnp
+.pnp.*
+.yarn/cache/
+.yarn/build-state.yml
+.yarn/install-state.gz
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
+.swc/
 
-# Precompiled Headers
-*.gch
-*.pch
+# Node debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
-# Linker files
-*.ilk
+# ────────────────────────────────────────────────────────────────────────
+# CSPICE kernel data (optional --features spice). Multi-GB binary blobs;
+# users supply their own from the NAIF generic-kernels server.
+# ────────────────────────────────────────────────────────────────────────
+kernels/
+*.bsp
+*.tls
+*.tpc
+*.tf
+*.tm
 
-# Debugger Files
-*.pdb
+# ────────────────────────────────────────────────────────────────────────
+# Local environment / secrets — never commit. Use .env.example for
+# templated values.
+# ────────────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
+# ────────────────────────────────────────────────────────────────────────
+# Coverage / testing
+# ────────────────────────────────────────────────────────────────────────
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
 
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
-build/
-Build/
-build-*/
-
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
-
-# Temporary files
+# ────────────────────────────────────────────────────────────────────────
+# Editor / OS noise
+# ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
 *.tmp
 *.log
-*.bak
-*.swp
+.idea/
+.fleet/
+.cursor/
+.aider*
+.claude/
+# VS Code: track shared config (.vscode/tasks.json, launch.json, settings.json,
+# extensions.json) but ignore per-user overrides.
+.vscode/*.local.json
+.vscode/.ropeproject
 
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
-
-# Python
+# ────────────────────────────────────────────────────────────────────────
+# Python (only present if you script kernel downloads or analysis tooling)
+# ────────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-.Python
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Python Environments
-.env
-.venv
-env/
+.venv/
 venv/
-ENV/
-env.bak/
-venv.bak/
 
-# Python Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.mypy_cache/
-
-# Rust
-target/
-**/*.rs.bk
+# ────────────────────────────────────────────────────────────────────────
+# Misc build / cache directories
+# ────────────────────────────────────────────────────────────────────────
+build/
+dist/
+.cache/

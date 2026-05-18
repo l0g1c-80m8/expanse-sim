@@ -1,0 +1,84 @@
+name: Bug report
+description: Something is broken — file a precise, reproducible report.
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please include enough
+        detail that someone else can reproduce it from a fresh clone.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Concise description of the bug. What did you expect? What did you see?
+      placeholder: |
+        Expected: …
+        Got: …
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands or clicks, in order. Include the full command-line invocation of `sim_server` and any control commands sent through the dashboard.
+      placeholder: |
+        1. `cargo run --release -p sim_server -- --dt 0.05 --warp 60`
+        2. Open dashboard, set Mission target = Mars
+        3. Click "Engage rendezvous", magnitude = 100%
+        4. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      multiple: true
+      options:
+        - sim_core (physics, ECS, ephemeris, autopilot, sensors)
+        - sim_server (axum / WebSocket / IPC)
+        - web_dashboard (UI, Three.js)
+        - CI / tooling
+        - Other / unknown
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit SHA
+      description: Output of `git rev-parse HEAD`
+      placeholder: "e.g. bdc3665"
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, rustc / node / npm versions, browser if dashboard-related.
+      placeholder: |
+        OS: Ubuntu 24.04
+        rustc: 1.85.0
+        node: 20.19.6
+        npm: 10.x
+        browser: Firefox 134
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant `sim_server` stderr (run with `RUST_LOG=debug`), browser console output, or test failure output.
+      render: text
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else?
+      description: Screenshots, screen recordings, related issues, etc.

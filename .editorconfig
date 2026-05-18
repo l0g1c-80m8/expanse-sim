@@ -1,0 +1,25 @@
+# EditorConfig — https://editorconfig.org
+# Applies cross-editor formatting defaults so style stays consistent without
+# every contributor having to configure their IDE.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Web stack: 2-space indent is idiomatic for TS / JS / JSON / Markdown.
+[*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,yml,yaml,md,mdx,css,html}]
+indent_size = 2
+
+# Tabs in Makefiles are load-bearing.
+[Makefile]
+indent_style = tab
+
+# Rust is 4-space per rustfmt default; the catch-all already covers that.
+[*.toml]
+indent_size = 2
