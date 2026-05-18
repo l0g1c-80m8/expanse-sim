@@ -9,12 +9,19 @@ use glam::{DMat3, DQuat, DVec3};
 use sim_core::ephemeris::{BodyParams, BodyState, EphemerisCache};
 use sim_core::{
     Autopilot, AutopilotPhase, CommandedWrench, ExpanseSim, Mission, PropulsionDrive,
-    PropulsionType, RigidBody, SimConfig, Spacecraft,
+    PropulsionType, RigidBody, SimConfig, SimMode, SimModeState, Spacecraft,
 };
+
+/// All autopilot tests run under Mission mode — Sandbox would silence the
+/// guidance loop by design.
+fn set_mission_mode(sim: &mut ExpanseSim) {
+    sim.world.insert_resource(SimModeState { mode: SimMode::Mission });
+}
 
 const TARGET_ID: i32 = 9_001;
 
 fn install_synthetic_target(sim: &mut ExpanseSim, position: DVec3, velocity: DVec3) {
+    set_mission_mode(sim);
     let cache = sim.world.resource::<EphemerisCache>().clone();
     // Replace the default roster with just our synthetic body so the
     // autopilot only sees what the test asks for.
@@ -26,6 +33,7 @@ fn install_synthetic_target(sim: &mut ExpanseSim, position: DVec3, velocity: DVe
             mu: 0.0,
             radius: 1.0e6,
             kepler: None,
+            parent_body: None,
         },
         BodyState { position, velocity },
     );
@@ -166,6 +174,7 @@ fn autopilot_catches_moving_target() {
                 mu: 0.0,
                 radius: 1.0e6,
                 kepler: None,
+            parent_body: None,
             },
             BodyState {
                 position: DVec3::new(1.0e7, 100.0 * t, 0.0),

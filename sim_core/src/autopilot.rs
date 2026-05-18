@@ -187,9 +187,17 @@ pub fn autopilot_system(
     mut ap: ResMut<Autopilot>,
     mut cmd: ResMut<AutopilotCommand>,
     mission: Res<Mission>,
+    mode: Res<crate::mode::SimModeState>,
     cache: Option<Res<EphemerisCache>>,
     mut q: Query<(&mut RigidBody, &mut PropulsionDrive), With<Spacecraft>>,
 ) {
+    // In Sandbox mode the autopilot is silent regardless of engage state —
+    // the ship coasts unless the operator's thrust controller writes.
+    if matches!(mode.mode, crate::mode::SimMode::Sandbox) {
+        ap.phase = AutopilotPhase::Idle;
+        *cmd = AutopilotCommand::default();
+        return;
+    }
     if !ap.engaged {
         ap.phase = AutopilotPhase::Idle;
         *cmd = AutopilotCommand::default();
@@ -360,12 +368,17 @@ mod tests {
         assert_relative_eq!(braking_distance(100.0, 5.0), 1000.0, epsilon = 1e-12);
     }
 
+    fn mission_mode() -> crate::mode::SimModeState {
+        crate::mode::SimModeState { mode: crate::mode::SimMode::Mission }
+    }
+
     #[test]
     fn autopilot_idle_when_disengaged() {
         let mut world = World::new();
         world.insert_resource(Autopilot::default());
         world.insert_resource(AutopilotCommand::default());
         world.insert_resource(Mission::default());
+        world.insert_resource(mission_mode());
         world.insert_resource(EphemerisCache::with_default_bodies());
         let mut schedule = Schedule::default();
         schedule.add_systems(autopilot_system);
@@ -385,6 +398,7 @@ mod tests {
         });
         world.insert_resource(AutopilotCommand::default());
         world.insert_resource(Mission::default()); // no target
+        world.insert_resource(mission_mode());
         world.insert_resource(EphemerisCache::with_default_bodies());
         world.spawn((
             Spacecraft { id: 1 },
@@ -405,6 +419,7 @@ mod tests {
         world.insert_resource(ap);
         world.insert_resource(AutopilotCommand::default());
         world.insert_resource(Mission::new(naif::SUN, naif::EARTH));
+        world.insert_resource(mission_mode());
         world.insert_resource(EphemerisCache::with_default_bodies());
 
         let earth = world

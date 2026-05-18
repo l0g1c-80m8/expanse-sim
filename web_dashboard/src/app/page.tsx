@@ -13,8 +13,11 @@ import { MissionPanel } from '@/components/MissionPanel';
 import { ViewPanel } from '@/components/ViewPanel';
 import { AutopilotPanel } from '@/components/AutopilotPanel';
 import { SensorsPanel } from '@/components/SensorsPanel';
+import { NavPanel } from '@/components/NavPanel';
+import { ModeToggle } from '@/components/ModeToggle';
 import { useSimSocket } from '@/hooks/useSimSocket';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useBreadcrumbs } from '@/hooks/useBreadcrumbs';
 import { useViewSettings } from '@/lib/viewSettings';
 import { metersToSceneUnits, type BodySnapshot } from '@/lib/telemetry';
 
@@ -37,7 +40,14 @@ export default function Dashboard() {
   const [cameraFocus, setCameraFocus] = useState<FocusTarget>(null);
   const [view, updateView] = useViewSettings();
 
-  const { frame, status, send } = useSimSocket(wsUrl);
+  const { frame, status, statusElapsedSec, failedAttempts, send, reconnect } =
+    useSimSocket(wsUrl);
+
+  const breadcrumbs = useBreadcrumbs(
+    frame?.spacecraft?.position ?? null,
+    frame?.tick ?? 0,
+    600,
+  );
 
   const focusShip = () => setCameraFocus('ship');
 
@@ -99,6 +109,8 @@ export default function Dashboard() {
               spacecraft={frame.spacecraft}
               mission={frame.mission}
               view={view}
+              nav={frame.nav}
+              breadcrumbs={breadcrumbs}
             />
           ) : (
             <Placeholder />
@@ -134,6 +146,7 @@ export default function Dashboard() {
               <span className="font-mono text-xs px-2.5 py-1 rounded-full bg-white/10">
                 T+ {frame ? frame.sim_time.toFixed(2) : '—'} s
               </span>
+              {frame && <ModeToggle mode={frame.mode} send={send} />}
               <button
                 onClick={focusShip}
                 disabled={!frame?.spacecraft}
@@ -162,7 +175,14 @@ export default function Dashboard() {
           </div>
 
           <div className="flex flex-col gap-3 items-end max-h-[calc(100vh-3rem)] overflow-y-auto no-scrollbar">
-            <TelemetryPanel frame={frame} status={status} />
+            <TelemetryPanel
+              frame={frame}
+              status={status}
+              statusElapsedSec={statusElapsedSec}
+              failedAttempts={failedAttempts}
+              wsUrl={wsUrl}
+              onReconnect={reconnect}
+            />
             {frame && (
               <>
                 <MissionPanel
@@ -171,6 +191,7 @@ export default function Dashboard() {
                   send={send}
                 />
                 <AutopilotPanel autopilot={frame.autopilot} send={send} />
+                <NavPanel nav={frame.nav} truth={frame.spacecraft} send={send} />
                 <SensorsPanel
                   sensors={frame.sensors}
                   bodies={frame.bodies}

@@ -29,6 +29,8 @@ pub mod dynamics;
 pub mod ephemeris;
 pub mod ipc;
 pub mod mission;
+pub mod mode;
+pub mod nav;
 pub mod propulsion;
 pub mod sensors;
 #[cfg(feature = "thermodynamics")]
@@ -45,6 +47,8 @@ pub use dynamics::{dynamics_system, DynamicsConfig};
 pub use ephemeris::{ephemeris_refresh_system, BodyParams, BodyState, EphemerisCache};
 pub use ipc::{AutonomyBridge, lockstep_sync_system, CommandPacket, TickTelemetry};
 pub use mission::Mission;
+pub use mode::{SimMode, SimModeState};
+pub use nav::{nav_filter_system, NavEstimate, NavFilter};
 pub use propulsion::propulsion_system;
 pub use sensors::{sensor_system, LatestSensorPack, SensorConfig, SensorPack};
 
@@ -87,10 +91,13 @@ impl ExpanseSim {
         }
         world.insert_resource(AutonomyBridge::default());
         world.insert_resource(Mission::default());
+        world.insert_resource(SimModeState::default());
         world.insert_resource(Autopilot::default());
         world.insert_resource(AutopilotCommand::default());
         world.insert_resource(SensorConfig::default());
         world.insert_resource(LatestSensorPack::default());
+        world.insert_resource(NavFilter::default());
+        world.insert_resource(NavEstimate::default());
 
         let mut schedule = Schedule::default();
         // Order: ephemeris refresh → autopilot (reads post-refresh body
@@ -110,9 +117,10 @@ impl ExpanseSim {
                 .after(autopilot_system),
         );
         schedule.add_systems(sensor_system.after(dynamics_system));
+        schedule.add_systems(nav_filter_system.after(sensor_system));
         #[cfg(feature = "thermodynamics")]
         schedule.add_systems(thermodynamics_system.after(propulsion_system));
-        schedule.add_systems(lockstep_sync_system.after(sensor_system));
+        schedule.add_systems(lockstep_sync_system.after(nav_filter_system));
 
         Self { world, schedule }
     }

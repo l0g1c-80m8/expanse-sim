@@ -24,7 +24,10 @@ pub mod naif {
     pub const MERCURY: i32 = 199;
     pub const VENUS: i32 = 299;
     pub const EARTH: i32 = 399;
+    pub const LUNA: i32 = 301;
     pub const MARS: i32 = 499;
+    pub const PHOBOS: i32 = 401;
+    pub const DEIMOS: i32 = 402;
     pub const JUPITER: i32 = 599;
     pub const SATURN: i32 = 699;
     pub const URANUS: i32 = 799;
@@ -56,8 +59,16 @@ pub struct BodyParams {
     pub mu: f64,
     /// Equatorial radius (m), used for rendering and proximity tests.
     pub radius: f64,
-    /// Initial Keplerian elements at sim epoch t=0.
+    /// Initial Keplerian elements at sim epoch t=0. When `parent_body` is
+    /// `None`, the elements are heliocentric. When `parent_body = Some(id)`,
+    /// the elements describe the orbit *relative to that body* (e.g. Luna's
+    /// elements are around Earth, not the Sun).
     pub kepler: Option<KeplerElements>,
+    /// NAIF id of the central body for the Kepler elements. `None` = Sun.
+    /// Order matters: parents must appear before their satellites in the
+    /// body list so the single-pass refresh sees them at their up-to-date
+    /// state when propagating the child.
+    pub parent_body: Option<i32>,
 }
 
 /// Classical Keplerian orbital elements (referenced to the Sun, J2000 frame).
@@ -158,118 +169,111 @@ pub fn default_bodies() -> Vec<BodyParams> {
         deg.to_radians()
     }
     vec![
-        BodyParams { id: naif::SUN, name: "Sun", mu: MU_SUN, radius: 6.957e8, kepler: None },
         BodyParams {
-            id: naif::MERCURY,
-            name: "Mercury",
-            mu: 2.2032e13,
-            radius: 2.4397e6,
+            id: naif::SUN, name: "Sun", mu: MU_SUN, radius: 6.957e8,
+            kepler: None, parent_body: None,
+        },
+        BodyParams {
+            id: naif::MERCURY, name: "Mercury", mu: 2.2032e13, radius: 2.4397e6,
             kepler: Some(KeplerElements {
-                sma: 0.387 * AU,
-                eccentricity: 0.2056,
-                inclination: d(7.005),
-                raan: d(48.331),
-                arg_periapsis: d(29.124),
+                sma: 0.387 * AU, eccentricity: 0.2056, inclination: d(7.005),
+                raan: d(48.331), arg_periapsis: d(29.124),
                 mean_anomaly_at_epoch: d(174.796),
             }),
+            parent_body: None,
         },
         BodyParams {
-            id: naif::VENUS,
-            name: "Venus",
-            mu: 3.2486e14,
-            radius: 6.0518e6,
+            id: naif::VENUS, name: "Venus", mu: 3.2486e14, radius: 6.0518e6,
             kepler: Some(KeplerElements {
-                sma: 0.723 * AU,
-                eccentricity: 0.0068,
-                inclination: d(3.395),
-                raan: d(76.680),
-                arg_periapsis: d(54.884),
+                sma: 0.723 * AU, eccentricity: 0.0068, inclination: d(3.395),
+                raan: d(76.680), arg_periapsis: d(54.884),
                 mean_anomaly_at_epoch: d(50.115),
             }),
+            parent_body: None,
         },
         BodyParams {
-            id: naif::EARTH,
-            name: "Earth",
-            mu: 3.986_004_418e14,
-            radius: 6.371e6,
+            id: naif::EARTH, name: "Earth", mu: 3.986_004_418e14, radius: 6.371e6,
             kepler: Some(KeplerElements {
-                sma: 1.000 * AU,
-                eccentricity: 0.0167,
-                inclination: d(0.000),
-                raan: d(-11.260),
-                arg_periapsis: d(114.208),
+                sma: 1.000 * AU, eccentricity: 0.0167, inclination: d(0.000),
+                raan: d(-11.260), arg_periapsis: d(114.208),
                 mean_anomaly_at_epoch: d(358.617),
             }),
+            parent_body: None,
+        },
+        // Luna — orbits Earth. Mean elements from JPL fact sheet.
+        BodyParams {
+            id: naif::LUNA, name: "Luna", mu: 4.9028e12, radius: 1.7374e6,
+            kepler: Some(KeplerElements {
+                sma: 3.844e8, eccentricity: 0.0549, inclination: d(5.145),
+                raan: d(125.08), arg_periapsis: d(318.15),
+                mean_anomaly_at_epoch: d(135.27),
+            }),
+            parent_body: Some(naif::EARTH),
         },
         BodyParams {
-            id: naif::MARS,
-            name: "Mars",
-            mu: 4.282_837e13,
-            radius: 3.389_5e6,
+            id: naif::MARS, name: "Mars", mu: 4.282_837e13, radius: 3.389_5e6,
             kepler: Some(KeplerElements {
-                sma: 1.524 * AU,
-                eccentricity: 0.0934,
-                inclination: d(1.850),
-                raan: d(49.558),
-                arg_periapsis: d(286.502),
+                sma: 1.524 * AU, eccentricity: 0.0934, inclination: d(1.850),
+                raan: d(49.558), arg_periapsis: d(286.502),
                 mean_anomaly_at_epoch: d(19.412),
             }),
+            parent_body: None,
+        },
+        // Phobos — orbits Mars at 9376 km, P = 7.66 h.
+        BodyParams {
+            id: naif::PHOBOS, name: "Phobos", mu: 7.087e5, radius: 1.1267e4,
+            kepler: Some(KeplerElements {
+                sma: 9.376e6, eccentricity: 0.0151, inclination: d(1.075),
+                raan: d(83.0), arg_periapsis: d(216.0),
+                mean_anomaly_at_epoch: d(91.0),
+            }),
+            parent_body: Some(naif::MARS),
+        },
+        // Deimos — orbits Mars at 23463 km, P = 30.3 h.
+        BodyParams {
+            id: naif::DEIMOS, name: "Deimos", mu: 9.615e4, radius: 6.2e3,
+            kepler: Some(KeplerElements {
+                sma: 2.3463e7, eccentricity: 0.0002, inclination: d(1.788),
+                raan: d(82.7), arg_periapsis: d(0.0),
+                mean_anomaly_at_epoch: d(325.3),
+            }),
+            parent_body: Some(naif::MARS),
         },
         BodyParams {
-            id: naif::JUPITER,
-            name: "Jupiter",
-            mu: 1.266_865_3e17,
-            radius: 6.991_1e7,
+            id: naif::JUPITER, name: "Jupiter", mu: 1.266_865_3e17, radius: 6.991_1e7,
             kepler: Some(KeplerElements {
-                sma: 5.203 * AU,
-                eccentricity: 0.0489,
-                inclination: d(1.303),
-                raan: d(100.464),
-                arg_periapsis: d(273.867),
+                sma: 5.203 * AU, eccentricity: 0.0489, inclination: d(1.303),
+                raan: d(100.464), arg_periapsis: d(273.867),
                 mean_anomaly_at_epoch: d(20.020),
             }),
+            parent_body: None,
         },
         BodyParams {
-            id: naif::SATURN,
-            name: "Saturn",
-            mu: 3.793_118_7e16,
-            radius: 5.823_2e7,
+            id: naif::SATURN, name: "Saturn", mu: 3.793_118_7e16, radius: 5.823_2e7,
             kepler: Some(KeplerElements {
-                sma: 9.537 * AU,
-                eccentricity: 0.0565,
-                inclination: d(2.485),
-                raan: d(113.665),
-                arg_periapsis: d(339.392),
+                sma: 9.537 * AU, eccentricity: 0.0565, inclination: d(2.485),
+                raan: d(113.665), arg_periapsis: d(339.392),
                 mean_anomaly_at_epoch: d(317.020),
             }),
+            parent_body: None,
         },
         BodyParams {
-            id: naif::URANUS,
-            name: "Uranus",
-            mu: 5.793_939e15,
-            radius: 2.536_2e7,
+            id: naif::URANUS, name: "Uranus", mu: 5.793_939e15, radius: 2.536_2e7,
             kepler: Some(KeplerElements {
-                sma: 19.191 * AU,
-                eccentricity: 0.0457,
-                inclination: d(0.773),
-                raan: d(74.006),
-                arg_periapsis: d(96.998),
+                sma: 19.191 * AU, eccentricity: 0.0457, inclination: d(0.773),
+                raan: d(74.006), arg_periapsis: d(96.998),
                 mean_anomaly_at_epoch: d(142.238),
             }),
+            parent_body: None,
         },
         BodyParams {
-            id: naif::NEPTUNE,
-            name: "Neptune",
-            mu: 6.836_529e15,
-            radius: 2.462_2e7,
+            id: naif::NEPTUNE, name: "Neptune", mu: 6.836_529e15, radius: 2.462_2e7,
             kepler: Some(KeplerElements {
-                sma: 30.069 * AU,
-                eccentricity: 0.0113,
-                inclination: d(1.770),
-                raan: d(131.784),
-                arg_periapsis: d(276.336),
+                sma: 30.069 * AU, eccentricity: 0.0113, inclination: d(1.770),
+                raan: d(131.784), arg_periapsis: d(276.336),
                 mean_anomaly_at_epoch: d(256.228),
             }),
+            parent_body: None,
         },
     ]
 }
@@ -301,31 +305,50 @@ impl EphemerisCache {
         let mut inner = self.inner.write().unwrap();
         inner.bodies = bodies;
         inner.states.clear();
-        // Pre-populate with epoch state.
-        let bodies = inner.bodies.clone();
-        for b in &bodies {
-            let state = match b.kepler {
-                Some(k) => propagate_keplerian(&k, MU_SUN, 0.0),
-                None => BodyState::default(),
-            };
-            inner.states.insert(b.id, state);
-        }
         inner.last_t = 0.0;
+        drop(inner);
+        // Single-pass propagation that respects parent_body. The body list
+        // is expected to list parents before satellites — see BodyParams docs.
+        self.refresh(0.0);
     }
 
     /// Recompute all body states for sim-time `t`. Run this in the worker
     /// thread or from the schedule's prologue; never from the integrator.
     ///
-    /// Bodies that don't carry Kepler elements (Sun, manually-pinned synthetic
-    /// targets) keep whatever state was last written. That preserves
-    /// `set_state` for static test scenarios and keeps the Sun at the origin.
+    /// Bodies are processed in list order; a body with `parent_body = Some(id)`
+    /// reads the parent's current state and applies its Keplerian elements
+    /// relative to that body using the **parent's μ** (not μ_sun). The
+    /// default body roster lists parents before children so a single pass
+    /// suffices; user-supplied rosters must obey the same ordering.
+    ///
+    /// Bodies that don't carry Kepler elements (Sun, manually-pinned
+    /// synthetic targets) keep whatever state was last written.
     pub fn refresh(&self, t: f64) {
         let mut inner = self.inner.write().unwrap();
         let bodies = inner.bodies.clone();
         for b in &bodies {
-            let state = match b.kepler {
-                Some(k) => propagate_keplerian(&k, MU_SUN, t),
-                None => inner.states.get(&b.id).copied().unwrap_or_default(),
+            let state = match (b.kepler, b.parent_body) {
+                (Some(k), None) => propagate_keplerian(&k, MU_SUN, t),
+                (Some(k), Some(parent_id)) => {
+                    let parent_state = inner.states.get(&parent_id).copied();
+                    let parent_mu = bodies
+                        .iter()
+                        .find(|p| p.id == parent_id)
+                        .map(|p| p.mu)
+                        .unwrap_or(MU_SUN);
+                    if let Some(p_state) = parent_state {
+                        let rel = propagate_keplerian(&k, parent_mu, t);
+                        BodyState {
+                            position: p_state.position + rel.position,
+                            velocity: p_state.velocity + rel.velocity,
+                        }
+                    } else {
+                        // Parent not yet propagated this tick — fall back to
+                        // last-known state to avoid a phantom origin position.
+                        inner.states.get(&b.id).copied().unwrap_or_default()
+                    }
+                }
+                (None, _) => inner.states.get(&b.id).copied().unwrap_or_default(),
             };
             inner.states.insert(b.id, state);
         }
@@ -496,9 +519,63 @@ mod tests {
     #[test]
     fn cache_default_returns_all_planets() {
         let cache = EphemerisCache::with_default_bodies();
-        assert_eq!(cache.bodies().len(), 9);
+        // Sun + 8 planets + Luna + Phobos + Deimos = 12.
+        assert_eq!(cache.bodies().len(), 12);
         assert!(cache.get(naif::EARTH).is_some());
         assert!(cache.get(naif::MARS).is_some());
+        assert!(cache.get(naif::LUNA).is_some());
+        assert!(cache.get(naif::PHOBOS).is_some());
+        assert!(cache.get(naif::DEIMOS).is_some());
+    }
+
+    #[test]
+    fn luna_orbits_within_a_lunar_distance_of_earth() {
+        let cache = EphemerisCache::with_default_bodies();
+        let earth = cache.get(naif::EARTH).unwrap();
+        let luna = cache.get(naif::LUNA).unwrap();
+        let d = (luna.position - earth.position).length();
+        // Lunar perigee/apogee bound: 363,300 → 405,500 km. Allow a margin.
+        assert!(
+            d > 3.5e8 && d < 4.2e8,
+            "Luna distance from Earth out of expected band: {} m",
+            d
+        );
+    }
+
+    #[test]
+    fn luna_period_is_about_27_days() {
+        let cache = EphemerisCache::with_default_bodies();
+        let earth_0 = cache.get(naif::EARTH).unwrap();
+        let luna_0 = cache.get(naif::LUNA).unwrap();
+        let rel_0 = luna_0.position - earth_0.position;
+        // After one sidereal month the relative geometry should be roughly
+        // back where it started. We use mean (not osculating) elements with
+        // no secular perturbations, so 5 % drift is the realistic envelope.
+        cache.refresh(27.321_661 * 86_400.0);
+        let earth_t = cache.get(naif::EARTH).unwrap();
+        let luna_t = cache.get(naif::LUNA).unwrap();
+        let rel_t = luna_t.position - earth_t.position;
+        let drift = (rel_0 - rel_t).length();
+        let lunar_distance = rel_0.length();
+        assert!(
+            drift < 0.05 * lunar_distance,
+            "Luna-Earth geometry drifted {} m ({:.2}% of lunar distance) — beyond Keplerian envelope",
+            drift,
+            100.0 * drift / lunar_distance,
+        );
+    }
+
+    #[test]
+    fn phobos_orbits_close_to_mars() {
+        let cache = EphemerisCache::with_default_bodies();
+        let mars = cache.get(naif::MARS).unwrap();
+        let phobos = cache.get(naif::PHOBOS).unwrap();
+        let d = (phobos.position - mars.position).length();
+        assert!(
+            d > 9.0e6 && d < 1.0e7,
+            "Phobos distance from Mars out of band: {} m",
+            d
+        );
     }
 
     #[test]

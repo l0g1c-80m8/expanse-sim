@@ -10,6 +10,7 @@ import {
   AU,
   type BodySnapshot,
   type MissionSnapshot,
+  type NavEstimate,
   type SpacecraftSnapshot,
 } from '@/lib/telemetry';
 import { forecastTrajectory } from '@/lib/trajectory';
@@ -44,9 +45,18 @@ interface Props {
   spacecraft: SpacecraftSnapshot | null;
   mission?: MissionSnapshot;
   view: ViewSettings;
+  nav?: NavEstimate | null;
+  breadcrumbs?: Float32Array;
 }
 
-export function SolarSystem({ bodies, spacecraft, mission, view }: Props) {
+export function SolarSystem({
+  bodies,
+  spacecraft,
+  mission,
+  view,
+  nav,
+  breadcrumbs,
+}: Props) {
   const source =
     mission?.source != null
       ? bodies.find((b) => b.id === mission.source) ?? null
@@ -76,6 +86,8 @@ export function SolarSystem({ bodies, spacecraft, mission, view }: Props) {
 
       {source && target && <TransitLine source={source} target={target} />}
 
+      {breadcrumbs && breadcrumbs.length >= 6 && <Breadcrumbs points={breadcrumbs} />}
+
       {spacecraft && (
         <Ship
           spacecraft={spacecraft}
@@ -84,7 +96,98 @@ export function SolarSystem({ bodies, spacecraft, mission, view }: Props) {
           trajectoryHorizonSec={view.trajectoryHorizonSec}
         />
       )}
+
+      {nav?.initialized && spacecraft && (
+        <GhostShip nav={nav} truth={spacecraft} />
+      )}
     </>
+  );
+}
+
+function Breadcrumbs({ points }: { points: Float32Array }) {
+  // Convert each metres-triple into scene coords on the fly. The count
+  // changes every frame, so React reconciles by replacing the buffer.
+  const scenePoints = useMemo(() => {
+    const out = new Float32Array(points.length);
+    for (let i = 0; i < points.length; i += 3) {
+      out[i] = points[i] / AU;
+      out[i + 1] = points[i + 2] / AU;
+      out[i + 2] = -points[i + 1] / AU;
+    }
+    return out;
+  }, [points]);
+  return (
+    <line>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[scenePoints, 3]}
+          count={scenePoints.length / 3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color="#22d3ee" transparent opacity={0.35} />
+    </line>
+  );
+}
+
+function GhostShip({
+  nav,
+  truth,
+}: {
+  nav: NavEstimate;
+  truth: SpacecraftSnapshot;
+}) {
+  const pos = metersToSceneUnits(nav.position);
+  const truthPos = metersToSceneUnits(truth.position);
+  // Line from estimate → truth so the user sees the error vector.
+  const linePoints = useMemo(
+    () =>
+      new Float32Array([
+        pos[0],
+        pos[1],
+        pos[2],
+        truthPos[0],
+        truthPos[1],
+        truthPos[2],
+      ]),
+    [pos, truthPos],
+  );
+  // 1-σ position uncertainty as a wireframe sphere around the estimate.
+  // Clamp the visual radius so a wildly diverged filter doesn't swallow
+  // the whole scene.
+  const sigmaScene = Math.min(nav.position_sigma_m / AU, 0.5);
+
+  return (
+    <group>
+      <group position={pos}>
+        <mesh>
+          <sphereGeometry args={[0.018, 16, 16]} />
+          <meshStandardMaterial
+            color="#a78bfa"
+            emissive="#7c3aed"
+            emissiveIntensity={0.5}
+            transparent
+            opacity={0.55}
+          />
+        </mesh>
+        {sigmaScene > 0.01 && (
+          <mesh>
+            <sphereGeometry args={[sigmaScene, 24, 24]} />
+            <meshBasicMaterial color="#a78bfa" transparent opacity={0.08} wireframe />
+          </mesh>
+        )}
+      </group>
+      <line>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[linePoints, 3]}
+            count={2}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial color="#a78bfa" transparent opacity={0.6} />
+      </line>
+    </group>
   );
 }
 

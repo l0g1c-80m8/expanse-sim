@@ -5,6 +5,10 @@ import type { SpacecraftSnapshot, TelemetryFrame } from '@/lib/telemetry';
 interface Props {
   frame: TelemetryFrame | null;
   status: string;
+  statusElapsedSec?: number;
+  failedAttempts?: number;
+  wsUrl?: string;
+  onReconnect?: () => void;
 }
 
 const fmt = (n: number, digits = 2) =>
@@ -17,7 +21,20 @@ function vecMag(v: [number, number, number]) {
   return Math.hypot(v[0], v[1], v[2]);
 }
 
-export function TelemetryPanel({ frame, status }: Props) {
+export function TelemetryPanel({
+  frame,
+  status,
+  statusElapsedSec = 0,
+  failedAttempts = 0,
+  wsUrl,
+  onReconnect,
+}: Props) {
+  const showNotRunning =
+    (status === 'connecting' && statusElapsedSec >= 3) ||
+    status === 'closed' ||
+    status === 'error' ||
+    failedAttempts >= 1;
+
   return (
     <aside className="pointer-events-auto w-80 bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4 text-xs font-mono space-y-3 shadow-xl">
       <header className="flex items-center justify-between">
@@ -34,16 +51,58 @@ export function TelemetryPanel({ frame, status }: Props) {
           }`}
         >
           {status}
+          {status === 'connecting' && statusElapsedSec > 0
+            ? ` ${statusElapsedSec}s`
+            : ''}
         </span>
       </header>
 
-      {frame ? <SystemBlock frame={frame} /> : <Pending />}
+      {showNotRunning && !frame && (
+        <NotConnectedHint wsUrl={wsUrl} onReconnect={onReconnect} />
+      )}
+
+      {frame ? <SystemBlock frame={frame} /> : !showNotRunning && <Pending />}
       {frame?.spacecraft ? (
         <SpacecraftBlock sc={frame.spacecraft} />
-      ) : (
+      ) : frame ? (
         <div className="text-slate-500">no spacecraft</div>
-      )}
+      ) : null}
     </aside>
+  );
+}
+
+function NotConnectedHint({
+  wsUrl,
+  onReconnect,
+}: {
+  wsUrl?: string;
+  onReconnect?: () => void;
+}) {
+  return (
+    <section className="space-y-2 border-y border-amber-500/20 -mx-4 px-4 py-3 bg-amber-500/5">
+      <div className="text-amber-200 text-[11px] leading-snug">
+        Can&apos;t reach the simulator. Is{' '}
+        <code className="text-amber-100">sim_server</code> running?
+      </div>
+      <code className="block text-[10px] text-slate-400 truncate">
+        {wsUrl ?? 'ws://127.0.0.1:8080/ws'}
+      </code>
+      <div className="text-[10px] text-slate-400 leading-snug">
+        Start it with:
+        <br />
+        <code className="text-slate-300">
+          cargo run --release -p sim_server
+        </code>
+      </div>
+      {onReconnect && (
+        <button
+          onClick={onReconnect}
+          className="w-full mt-1 py-1.5 rounded text-[10px] uppercase tracking-wider bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-100 transition-colors"
+        >
+          Retry now
+        </button>
+      )}
+    </section>
   );
 }
 

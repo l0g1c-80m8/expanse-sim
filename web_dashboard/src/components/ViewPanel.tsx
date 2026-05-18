@@ -144,21 +144,28 @@ function Toggle({
   value: boolean;
   onChange: (v: boolean) => void;
 }) {
+  // Pixel-explicit sizes avoid Tailwind shorthand resolving differently
+  // across versions, and `flex-shrink-0` stops the track from collapsing
+  // when the panel is narrow.
   return (
-    <label className="flex items-center justify-between cursor-pointer select-none">
+    <label className="flex items-center justify-between gap-3 cursor-pointer select-none">
       <span className="text-slate-300">{label}</span>
       <button
-        onClick={() => onChange(!value)}
-        className={`relative w-9 h-5 rounded-full transition-colors ${
-          value ? 'bg-blue-500/70' : 'bg-white/10'
-        }`}
-        aria-pressed={value}
         type="button"
+        role="switch"
+        aria-checked={value}
+        aria-label={label}
+        onClick={() => onChange(!value)}
+        className={`relative inline-flex flex-shrink-0 items-center w-10 h-6 rounded-full transition-colors duration-150 ${
+          value ? 'bg-blue-500/70' : 'bg-white/15 hover:bg-white/25'
+        }`}
+        style={{ padding: 2 }}
       >
         <span
-          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-            value ? 'translate-x-4' : 'translate-x-0.5'
-          }`}
+          className="block w-5 h-5 rounded-full bg-white shadow transition-transform duration-150"
+          style={{
+            transform: value ? 'translateX(16px)' : 'translateX(0)',
+          }}
         />
       </button>
     </label>

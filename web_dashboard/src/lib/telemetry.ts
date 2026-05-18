@@ -84,6 +84,19 @@ export interface SensorPack {
   attitude: AttitudeReading | null;
 }
 
+export type SimMode = 'sandbox' | 'mission';
+
+export interface NavEstimate {
+  initialized: boolean;
+  position: [number, number, number];
+  velocity: [number, number, number];
+  position_sigma_m: number;
+  velocity_sigma_m_s: number;
+  residual_range_m: number;
+  last_update_body: number;
+  updates_count: number;
+}
+
 export interface TelemetryFrame {
   sim_time: number;
   warp: number;
@@ -94,6 +107,8 @@ export interface TelemetryFrame {
   thrust_controller: ThrustControllerSnapshot;
   autopilot: AutopilotSnapshot;
   sensors: SensorPack;
+  nav: NavEstimate;
+  mode: SimMode;
   tick: number;
   effective_warp: number;
 }
@@ -119,6 +134,13 @@ export type ControlCommand =
       accel_sigma_m_s2?: number;
       gyro_sigma_rad_s?: number;
       star_tracker_sigma_rad?: number;
+    }
+  | { type: 'set_mode'; mode: SimMode }
+  | {
+      type: 'set_nav_filter';
+      enabled: boolean;
+      init_sigma_r_m?: number;
+      init_sigma_v_m_s?: number;
     }
   | { type: 'reset' };
 

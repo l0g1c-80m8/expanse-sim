@@ -86,6 +86,20 @@ pub enum ControlCommand {
         gyro_sigma_rad_s: Option<f64>,
         star_tracker_sigma_rad: Option<f64>,
     },
+    /// Switch the top-level simulation mode (`"sandbox"` / `"mission"`).
+    /// Switching to Mission auto-stages the ship at the source body if a
+    /// mission is set; switching to Sandbox cuts the autopilot.
+    #[serde(rename = "set_mode")]
+    SetMode { mode: String },
+    /// Enable / disable the onboard EKF navigation filter. When enabled it
+    /// initialises from ground truth (with operator-set uncertainty) and
+    /// thereafter operates solely off the synthetic sensor pack.
+    #[serde(rename = "set_nav_filter")]
+    SetNavFilter {
+        enabled: bool,
+        init_sigma_r_m: Option<f64>,
+        init_sigma_v_m_s: Option<f64>,
+    },
     #[serde(rename = "reset")]
     Reset,
 }
@@ -104,6 +118,8 @@ pub struct TelemetryFrame {
     pub thrust_controller: ThrustControllerSnapshot,
     pub autopilot: AutopilotSnapshot,
     pub sensors: sim_core::SensorPack,
+    pub nav: sim_core::NavEstimate,
+    pub mode: String,
     pub tick: u64,
     /// Effective sim-seconds advanced per wall-second over the last second.
     /// Useful for spotting cases where the requested warp exceeds the
@@ -416,6 +432,22 @@ fn snapshot(
         .map(|p| p.0.clone())
         .unwrap_or_default();
 
+    let nav = sim
+        .world
+        .get_resource::<sim_core::NavEstimate>()
+        .cloned()
+        .unwrap_or_default();
+
+    let mode = sim
+        .world
+        .get_resource::<sim_core::SimModeState>()
+        .map(|m| match m.mode {
+            sim_core::SimMode::Sandbox => "sandbox",
+            sim_core::SimMode::Mission => "mission",
+        })
+        .unwrap_or("sandbox")
+        .to_string();
+
     TelemetryFrame {
         sim_time,
         warp: clock.warp,
@@ -426,6 +458,8 @@ fn snapshot(
         thrust_controller,
         autopilot,
         sensors,
+        nav,
+        mode,
         tick,
         effective_warp,
     }
@@ -564,6 +598,43 @@ fn apply_command(
                 if let Some(v) = accel_sigma_m_s2 { cfg.accel_sigma_m_s2 = v.max(0.0); }
                 if let Some(v) = gyro_sigma_rad_s { cfg.gyro_sigma_rad_s = v.max(0.0); }
                 if let Some(v) = star_tracker_sigma_rad { cfg.star_tracker_sigma_rad = v.max(0.0); }
+            }
+        }
+        ControlCommand::SetMode { mode } => {
+            let new_mode = match mode.as_str() {
+                "mission" => sim_core::SimMode::Mission,
+                _ => sim_core::SimMode::Sandbox,
+            };
+            if let Some(mut state) = sim.world.get_resource_mut::<sim_core::SimModeState>() {
+                let was = state.mode;
+                state.mode = new_mode;
+                if was != new_mode && matches!(new_mode, sim_core::SimMode::Sandbox) {
+                    // Leaving Mission: cut any in-flight autopilot thrust so
+                    // the ship coasts cleanly into Sandbox.
+                    if let Some(mut ap) = sim.world.get_resource_mut::<sim_core::Autopilot>() {
+                        ap.engaged = false;
+                    }
+                    if let Ok(mut entity) = sim.world.get_entity_mut(spacecraft_entity) {
+                        if let Some(mut drive) = entity.get_mut::<PropulsionDrive>() {
+                            drive.thrust_command = DVec3::ZERO;
+                        }
+                    }
+                }
+            }
+        }
+        ControlCommand::SetNavFilter {
+            enabled,
+            init_sigma_r_m,
+            init_sigma_v_m_s,
+        } => {
+            if let Some(mut nf) = sim.world.get_resource_mut::<sim_core::NavFilter>() {
+                let want_reset = !nf.enabled && enabled; // engaging from off
+                nf.enabled = enabled;
+                if let Some(s) = init_sigma_r_m { nf.init_sigma_r_m = s.max(0.0); }
+                if let Some(s) = init_sigma_v_m_s { nf.init_sigma_v_m_s = s.max(0.0); }
+                if want_reset {
+                    nf.initialized = false;
+                }
             }
         }
         ControlCommand::Reset => {
