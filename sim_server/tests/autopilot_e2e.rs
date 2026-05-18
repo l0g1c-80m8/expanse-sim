@@ -1,0 +1,127 @@
+//! End-to-end: engage autopilot via WebSocket, watch the phase transitions
+//! through telemetry, confirm the ship arrives. Requires the *release*
+//! binary to keep walltime reasonable: at warp 2000× over a 3-day brachistochrone
+//! the dev build can't sustain the required tick rate.
+//!
+//! Run with:
+//!   `cargo build --release -p sim_server`
+//!   `CARGO_BIN_EXE_sim_server=target/release/sim_server cargo test -p sim_server \`
+//!     `--test autopilot_e2e -- --ignored --nocapture`
+
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+use futures_util::{SinkExt, StreamExt};
+use tokio::time::{sleep, timeout};
+use tokio_tungstenite::tungstenite::Message;
+
+struct ServerProc(Child);
+impl Drop for ServerProc {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn launch(port: u16) -> ServerProc {
+    let bin = env!("CARGO_BIN_EXE_sim_server");
+    let child = Command::new(bin)
+        .args([
+            "--bind",
+            &format!("127.0.0.1:{port}"),
+            // Larger dt + lower warp so the test stays fast even under the
+            // debug build's slower tick rate. dt = 5 s is still well inside
+            // RK4's stability envelope for solar-system orbital mechanics.
+            "--dt",
+            "5.0",
+            "--warp",
+            "2000",
+            "--telemetry-stride",
+            "50",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("launch sim_server");
+    ServerProc(child)
+}
+
+async fn wait_for_health(port: u16) {
+    for _ in 0..50 {
+        if reqwest::get(format!("http://127.0.0.1:{port}/health"))
+            .await
+            .and_then(|r| r.error_for_status())
+            .is_ok()
+        {
+            return;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    panic!("server never healthy");
+}
+
+#[tokio::test]
+#[ignore]
+async fn autopilot_reaches_mars() {
+    let port = 18183;
+    let _s = launch(port);
+    wait_for_health(port).await;
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
+        .await
+        .unwrap();
+
+    // Stage spacecraft at Earth, then engage autopilot at 5 g to Mars.
+    // The default mission is Earth → Mars.
+    ws.send(Message::Text(r#"{"type":"stage_at_source"}"#.to_string()))
+        .await
+        .unwrap();
+    ws.send(Message::Text(
+        r#"{"type":"set_autopilot","engaged":true,"accel_g":5.0}"#.to_string(),
+    ))
+    .await
+    .unwrap();
+
+    // Watch the autopilot phase. Walltime budget: 30 s. At warp 5000 with
+    // 5g acceleration over ~0.5 AU, transit ≈ 3.5 days sim = 60 s wall.
+    let mut saw_boost = false;
+    let mut saw_brake = false;
+    let mut arrived = false;
+    let mut last_phase = String::new();
+    let mut last_range = 0.0_f64;
+    let mut last_closing = 0.0_f64;
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
+        let Ok(msg) = timeout(Duration::from_secs(5), ws.next()).await else {
+            break;
+        };
+        let Some(Ok(Message::Text(t))) = msg else { continue };
+        let v: serde_json::Value = serde_json::from_str(&t).unwrap();
+        let phase = v["autopilot"]["phase"].as_str().unwrap_or("").to_string();
+        let range = v["autopilot"]["range_m"].as_f64().unwrap_or(0.0);
+        let closing = v["autopilot"]["closing_m_s"].as_f64().unwrap_or(0.0);
+        if phase != last_phase {
+            eprintln!(
+                "phase {:>8} → {:>8}   range={:.3e}  closing={:>7.1} m/s",
+                last_phase, phase, range, closing,
+            );
+            last_phase = phase.clone();
+        }
+        last_range = range;
+        last_closing = closing;
+        match phase.as_str() {
+            "boost" => saw_boost = true,
+            "brake" => saw_brake = true,
+            "arrived" => {
+                arrived = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    eprintln!("final: phase={last_phase} range={last_range:.3e} closing={last_closing}");
+
+    assert!(saw_boost, "autopilot never entered boost");
+    assert!(saw_brake, "autopilot never entered brake");
+    assert!(arrived, "autopilot never reported arrival");
+}

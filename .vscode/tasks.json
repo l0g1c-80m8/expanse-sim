@@ -280,6 +280,23 @@
       "detail": "Launches server, opens WS, asserts telemetry + commands work"
     },
     {
+      "label": "test: E2E thrust controller",
+      "type": "cargo",
+      "command": "test",
+      "args": [
+        "-p",
+        "sim_server",
+        "--test",
+        "controls_smoke",
+        "--",
+        "--ignored",
+        "--nocapture"
+      ],
+      "problemMatcher": ["$rustc"],
+      "group": "test",
+      "detail": "Verifies set_thrust_mode + set_thrust_magnitude burn propellant"
+    },
+    {
       "label": "test: with verbose output",
       "type": "cargo",
       "command": "test",

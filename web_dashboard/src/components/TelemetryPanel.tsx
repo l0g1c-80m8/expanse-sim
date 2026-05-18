@@ -52,10 +52,19 @@ function Pending() {
 }
 
 function SystemBlock({ frame }: { frame: TelemetryFrame }) {
+  // Flag when the requested warp can't actually be delivered — once the
+  // server's tick budget is saturated, effective_warp falls below warp.
+  const overshoot =
+    frame.warp > 0 && frame.effective_warp < frame.warp * 0.9 && !frame.paused;
   return (
     <section className="space-y-1">
       <Row k="sim-t" v={`${fmt(frame.sim_time, 1)} s`} />
-      <Row k="warp" v={`${fmt(frame.warp, 1)}×`} />
+      <Row k="warp req" v={`${fmt(frame.warp, 1)}×`} />
+      <Row
+        k="warp eff"
+        v={`${fmt(frame.effective_warp, 1)}×`}
+        accent={overshoot ? 'text-amber-300' : false}
+      />
       <Row k="state" v={frame.paused ? 'PAUSED' : 'RUNNING'} />
       <Row k="tick" v={frame.tick.toString()} />
       <Row k="bodies" v={frame.bodies.length.toString()} />
@@ -83,11 +92,25 @@ function SpacecraftBlock({ sc }: { sc: SpacecraftSnapshot }) {
   );
 }
 
-function Row({ k, v, accent = false }: { k: string; v: string; accent?: boolean }) {
+function Row({
+  k,
+  v,
+  accent = false,
+}: {
+  k: string;
+  v: string;
+  accent?: boolean | string;
+}) {
+  const cls =
+    typeof accent === 'string'
+      ? accent
+      : accent
+      ? 'text-cyan-300'
+      : 'text-slate-200';
   return (
     <div className="flex justify-between gap-3">
       <span className="text-slate-400">{k}</span>
-      <span className={accent ? 'text-cyan-300' : 'text-slate-200'}>{v}</span>
+      <span className={cls}>{v}</span>
     </div>
   );
 }

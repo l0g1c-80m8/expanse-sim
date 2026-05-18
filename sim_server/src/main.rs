@@ -17,6 +17,7 @@
 //! ```
 
 mod sim_runner;
+mod thrust_controller;
 mod ws;
 
 use std::net::SocketAddr;

@@ -22,15 +22,21 @@
 //! server binary, an embed user, or a test) decide how many ticks to retire
 //! per wall-second. `SimClock` provides the wall→sim conversion when needed.
 
+pub mod autopilot;
 pub mod clock;
 pub mod components;
 pub mod dynamics;
 pub mod ephemeris;
 pub mod ipc;
+pub mod mission;
 pub mod propulsion;
+pub mod sensors;
 #[cfg(feature = "thermodynamics")]
 pub mod thermal;
 
+pub use autopilot::{
+    autopilot_system, Autopilot, AutopilotCommand, AutopilotPhase, ArrivalTolerance,
+};
 pub use clock::{SimClock, SimTime};
 pub use components::{
     CommandedWrench, PropulsionDrive, PropulsionType, RigidBody, Spacecraft,
@@ -38,7 +44,9 @@ pub use components::{
 pub use dynamics::{dynamics_system, DynamicsConfig};
 pub use ephemeris::{ephemeris_refresh_system, BodyParams, BodyState, EphemerisCache};
 pub use ipc::{AutonomyBridge, lockstep_sync_system, CommandPacket, TickTelemetry};
+pub use mission::Mission;
 pub use propulsion::propulsion_system;
+pub use sensors::{sensor_system, LatestSensorPack, SensorConfig, SensorPack};
 
 #[cfg(feature = "thermodynamics")]
 pub use components::Thermodynamics;
@@ -78,22 +86,33 @@ impl ExpanseSim {
             world.insert_resource(EphemerisCache::with_default_bodies());
         }
         world.insert_resource(AutonomyBridge::default());
+        world.insert_resource(Mission::default());
+        world.insert_resource(Autopilot::default());
+        world.insert_resource(AutopilotCommand::default());
+        world.insert_resource(SensorConfig::default());
+        world.insert_resource(LatestSensorPack::default());
 
         let mut schedule = Schedule::default();
-        // Order matters: refresh planet states first, then update propellant
-        // (which may rescale inertia), then integrate, then optional thermal,
-        // then the lockstep exchange so autonomy sees post-tick state.
+        // Order: ephemeris refresh → autopilot (reads post-refresh body
+        // states) → propulsion → dynamics → sensors (post-step) → thermal
+        // → lockstep.
         if cfg.load_default_bodies {
             schedule.add_systems(ephemeris_refresh_system);
         }
         schedule.add_systems(
+            autopilot_system
+                .after(ephemeris_refresh_system)
+                .before(propulsion_system),
+        );
+        schedule.add_systems(
             (propulsion_system, dynamics_system)
                 .chain()
-                .after(ephemeris_refresh_system),
+                .after(autopilot_system),
         );
+        schedule.add_systems(sensor_system.after(dynamics_system));
         #[cfg(feature = "thermodynamics")]
         schedule.add_systems(thermodynamics_system.after(propulsion_system));
-        schedule.add_systems(lockstep_sync_system.after(dynamics_system));
+        schedule.add_systems(lockstep_sync_system.after(sensor_system));
 
         Self { world, schedule }
     }

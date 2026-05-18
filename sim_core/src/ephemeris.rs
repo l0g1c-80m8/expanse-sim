@@ -315,17 +315,34 @@ impl EphemerisCache {
 
     /// Recompute all body states for sim-time `t`. Run this in the worker
     /// thread or from the schedule's prologue; never from the integrator.
+    ///
+    /// Bodies that don't carry Kepler elements (Sun, manually-pinned synthetic
+    /// targets) keep whatever state was last written. That preserves
+    /// `set_state` for static test scenarios and keeps the Sun at the origin.
     pub fn refresh(&self, t: f64) {
         let mut inner = self.inner.write().unwrap();
         let bodies = inner.bodies.clone();
         for b in &bodies {
             let state = match b.kepler {
                 Some(k) => propagate_keplerian(&k, MU_SUN, t),
-                None => BodyState::default(),
+                None => inner.states.get(&b.id).copied().unwrap_or_default(),
             };
             inner.states.insert(b.id, state);
         }
         inner.last_t = t;
+    }
+
+    /// Pin a body's state directly. Useful for tests and for injecting
+    /// vehicles whose motion is driven externally (e.g., a target drone).
+    /// Inserts the body if it isn't already registered.
+    pub fn set_state(&self, params: BodyParams, state: BodyState) {
+        let mut inner = self.inner.write().unwrap();
+        if let Some(i) = inner.bodies.iter().position(|b| b.id == params.id) {
+            inner.bodies[i] = params;
+        } else {
+            inner.bodies.push(params);
+        }
+        inner.states.insert(params.id, state);
     }
 
     pub fn get(&self, body: i32) -> Option<BodyState> {
