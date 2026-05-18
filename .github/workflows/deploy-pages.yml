@@ -1,0 +1,98 @@
+name: Deploy dashboard to GitHub Pages
+
+# Builds web_dashboard as a Next.js static export and publishes it to GitHub
+# Pages. The site URL ends up at https://<owner>.github.io/<repo>/, so the
+# build injects NEXT_PUBLIC_BASE_PATH=/<repo> for asset URLs.
+#
+# Repo setup required (one-time):
+#   Settings → Pages → "Build and deployment" → Source: "GitHub Actions"
+#
+# Triggers:
+#   - push to develop or main (auto-deploy)
+#   - manual via the Actions tab (workflow_dispatch)
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      # Only rebuild when the dashboard or this workflow changes — the Rust
+      # crates don't contribute to the published bundle.
+      - "web_dashboard/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+# Grant the workflow the minimum permissions for Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment may run at a time. New pushes cancel a stale
+# in-progress build but never an in-progress *deploy* (we want a deploy that
+# has handed off to GitHub's CDN to complete cleanly).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web_dashboard
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web_dashboard/package-lock.json
+
+      - name: Configure Pages
+        # Reads the repo / owner names and exposes them as `base_path` for
+        # downstream steps. We use the output to keep the `basePath`
+        # injection in one place.
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build static export
+        env:
+          # `actions/configure-pages` outputs `base_path` like "/expanse-sim".
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          # Default WS endpoint baked into the bundle. Override per-deployment
+          # by setting the same name as a repo / environment variable in the
+          # Actions settings. Users can still edit the URL live in the
+          # settings panel (it's persisted to localStorage).
+          NEXT_PUBLIC_DEFAULT_WS_URL: ${{ vars.NEXT_PUBLIC_DEFAULT_WS_URL || 'ws://127.0.0.1:8080/ws' }}
+        run: npm run build
+
+      - name: Disable Jekyll on the output
+        # Pages applies Jekyll to artifacts by default, which silently drops
+        # any file/directory beginning with an underscore (Next.js emits
+        # `_next/static/...`). The .nojekyll sentinel suppresses that.
+        run: touch out/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web_dashboard/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      # The Pages environment is what surfaces the live URL on the workflow
+      # summary view (and gates the deployment behind any environment
+      # protections the user configures).
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

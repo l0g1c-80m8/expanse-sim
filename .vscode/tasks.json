@@ -392,6 +392,28 @@
       "problemMatcher": ["$tsc"],
       "detail": "Produces `web_dashboard/out/` static bundle"
     },
+    {
+      "label": "dashboard: pages-style build (NEXT_PUBLIC_BASE_PATH=/expanse-sim)",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build"],
+      "options": {
+        "cwd": "${workspaceFolder}/web_dashboard",
+        "env": { "NEXT_PUBLIC_BASE_PATH": "/expanse-sim" }
+      },
+      "problemMatcher": ["$tsc"],
+      "detail": "Mirror of the GitHub Pages CI build — verify basePath asset URLs"
+    },
+    {
+      "label": "dashboard: preview static export",
+      "type": "shell",
+      "command": "npx",
+      "args": ["--yes", "serve", "-s", "out", "-l", "4000"],
+      "options": { "cwd": "${workspaceFolder}/web_dashboard" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "detail": "Serve web_dashboard/out on http://localhost:4000 to test the deploy bundle"
+    },
 
     // ────────────────────────────────────────────────────────────────────
     // DEBUG / SMOKE

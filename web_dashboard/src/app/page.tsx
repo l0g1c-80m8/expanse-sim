@@ -18,7 +18,12 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useViewSettings } from '@/lib/viewSettings';
 import { metersToSceneUnits, type BodySnapshot } from '@/lib/telemetry';
 
-const DEFAULT_WS = 'ws://127.0.0.1:8080/ws';
+// Default WS endpoint. Hosted deployments (e.g. GitHub Pages) can bake in a
+// different default at build time via NEXT_PUBLIC_DEFAULT_WS_URL; users can
+// still override it through the settings panel (value persists in
+// localStorage).
+const DEFAULT_WS =
+  process.env.NEXT_PUBLIC_DEFAULT_WS_URL ?? 'ws://127.0.0.1:8080/ws';
 const WARP_LADDER = [0, 1, 10, 100, 1_000, 10_000, 100_000];
 
 type FocusTarget = number | 'ship' | 'sun' | null;
