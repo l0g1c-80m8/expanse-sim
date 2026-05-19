@@ -15,9 +15,9 @@ import { AutopilotPanel } from '@/components/AutopilotPanel';
 import { SensorsPanel } from '@/components/SensorsPanel';
 import { NavPanel } from '@/components/NavPanel';
 import { ModeToggle } from '@/components/ModeToggle';
-import { useSimSocket } from '@/hooks/useSimSocket';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useBreadcrumbs } from '@/hooks/useBreadcrumbs';
+import { useSimTransport, type TransportMode } from '@/hooks/useSimTransport';
 import { useViewSettings } from '@/lib/viewSettings';
 import { metersToSceneUnits, type BodySnapshot } from '@/lib/telemetry';
 
@@ -27,6 +27,10 @@ import { metersToSceneUnits, type BodySnapshot } from '@/lib/telemetry';
 // localStorage).
 const DEFAULT_WS =
   process.env.NEXT_PUBLIC_DEFAULT_WS_URL ?? 'ws://127.0.0.1:8080/ws';
+// Default to WASM so the hosted page works without any backend. Local devs
+// can flip to WS via the header toggle (and the choice persists).
+const DEFAULT_TRANSPORT: TransportMode = 'wasm';
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 const WARP_LADDER = [0, 1, 10, 100, 1_000, 10_000, 100_000];
 
 type FocusTarget = number | 'ship' | 'sun' | null;
@@ -36,12 +40,24 @@ export default function Dashboard() {
     if (typeof window === 'undefined') return DEFAULT_WS;
     return window.localStorage.getItem('expanse_ws_url') ?? DEFAULT_WS;
   });
+  const [transport, setTransport] = useState<TransportMode>(() => {
+    if (typeof window === 'undefined') return DEFAULT_TRANSPORT;
+    return (window.localStorage.getItem('expanse_transport') as TransportMode | null) ??
+      DEFAULT_TRANSPORT;
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [cameraFocus, setCameraFocus] = useState<FocusTarget>(null);
   const [view, updateView] = useViewSettings();
 
   const { frame, status, statusElapsedSec, failedAttempts, send, reconnect } =
-    useSimSocket(wsUrl);
+    useSimTransport(transport, wsUrl, BASE_PATH);
+
+  const updateTransport = (next: TransportMode) => {
+    setTransport(next);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('expanse_transport', next);
+    }
+  };
 
   const breadcrumbs = useBreadcrumbs(
     frame?.spacecraft?.position ?? null,
@@ -147,6 +163,7 @@ export default function Dashboard() {
                 T+ {frame ? frame.sim_time.toFixed(2) : '—'} s
               </span>
               {frame && <ModeToggle mode={frame.mode} send={send} />}
+              <TransportToggle mode={transport} onChange={updateTransport} />
               <button
                 onClick={focusShip}
                 disabled={!frame?.spacecraft}
@@ -182,6 +199,7 @@ export default function Dashboard() {
               failedAttempts={failedAttempts}
               wsUrl={wsUrl}
               onReconnect={reconnect}
+              transport={transport}
             />
             {frame && (
               <>
@@ -231,6 +249,44 @@ export default function Dashboard() {
         </footer>
       </div>
     </main>
+  );
+}
+
+function TransportToggle({
+  mode,
+  onChange,
+}: {
+  mode: TransportMode;
+  onChange: (m: TransportMode) => void;
+}) {
+  const baseChip =
+    'px-2 py-1 rounded-full text-[10px] font-mono uppercase tracking-wider border transition-colors';
+  return (
+    <div
+      className="inline-flex items-center gap-1 px-1 py-0.5 rounded-full bg-black/30 border border-white/15"
+      title="Where the simulator runs: in your browser (WASM) or on a remote server (WS)."
+    >
+      <button
+        className={`${baseChip} ${
+          mode === 'wasm'
+            ? 'bg-violet-500/30 text-violet-100 border-violet-500/50'
+            : 'border-transparent text-slate-400 hover:text-slate-200'
+        }`}
+        onClick={() => onChange('wasm')}
+      >
+        WASM
+      </button>
+      <button
+        className={`${baseChip} ${
+          mode === 'ws'
+            ? 'bg-blue-500/30 text-blue-100 border-blue-500/50'
+            : 'border-transparent text-slate-400 hover:text-slate-200'
+        }`}
+        onClick={() => onChange('ws')}
+      >
+        Server
+      </button>
+    </div>
   );
 }
 

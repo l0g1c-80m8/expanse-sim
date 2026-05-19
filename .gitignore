@@ -27,6 +27,11 @@ next-env.d.ts
 .vercel/
 .swc/
 
+# WASM artifacts emitted by wasm-pack into the dashboard's public dir.
+# The CI workflow regenerates them on every deploy; checking them in would
+# create giant churn-y diffs.
+web_dashboard/public/wasm/
+
 # Node debug logs
 npm-debug.log*
 yarn-debug.log*

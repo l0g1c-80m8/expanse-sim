@@ -10,7 +10,9 @@ use axum::{
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
 
-use crate::sim_runner::{AppState, ControlCommand};
+use sim_core::protocol::ControlCommand;
+
+use crate::sim_runner::AppState;
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,

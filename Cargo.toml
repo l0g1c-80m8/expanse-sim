@@ -1,6 +1,11 @@
 [workspace]
 members = [
     "sim_core",
-    "sim_server"
+    "sim_server",
+    "sim_wasm",
 ]
 resolver = "2"
+
+# Excluding sim_wasm from the default workspace build is unnecessary —
+# its dev profile builds fine for the host triple; only `wasm-pack` or an
+# explicit `--target wasm32-unknown-unknown` produces the wasm artifact.

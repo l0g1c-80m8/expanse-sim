@@ -40,6 +40,22 @@
       "detail": "Build sim_core with the optional thermal-dissipation model enabled"
     },
     {
+      "label": "build: sim_wasm (release, into dashboard public/)",
+      "type": "shell",
+      "command": "wasm-pack",
+      "args": [
+        "build",
+        "sim_wasm",
+        "--release",
+        "--target",
+        "web",
+        "--out-dir",
+        "../web_dashboard/public/wasm"
+      ],
+      "problemMatcher": ["$rustc"],
+      "detail": "Compile sim_wasm to WASM and drop the JS shim + .wasm into web_dashboard/public/wasm so npm run dev/build picks it up"
+    },
+    {
       "label": "build: sim_core with all features (requires CSPICE)",
       "type": "cargo",
       "command": "build",

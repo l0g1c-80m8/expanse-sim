@@ -32,9 +32,11 @@ pub mod mission;
 pub mod mode;
 pub mod nav;
 pub mod propulsion;
+pub mod protocol;
 pub mod sensors;
 #[cfg(feature = "thermodynamics")]
 pub mod thermal;
+pub mod thrust_controller;
 
 pub use autopilot::{
     autopilot_system, Autopilot, AutopilotCommand, AutopilotPhase, ArrivalTolerance,
@@ -50,7 +52,13 @@ pub use mission::Mission;
 pub use mode::{SimMode, SimModeState};
 pub use nav::{nav_filter_system, NavEstimate, NavFilter};
 pub use propulsion::propulsion_system;
+pub use protocol::{
+    apply_command, build_default_sim, snapshot, spawn_default_spacecraft, AutopilotSnapshot,
+    BodySnapshot, ControlCommand, MissionSnapshot, ResetParams, SpacecraftSnapshot,
+    TelemetryFrame, ThrustControllerSnapshot,
+};
 pub use sensors::{sensor_system, LatestSensorPack, SensorConfig, SensorPack};
+pub use thrust_controller::{thrust_controller_system, ThrustController, ThrustMode};
 
 #[cfg(feature = "thermodynamics")]
 pub use components::Thermodynamics;

@@ -11,9 +11,11 @@
 
 use bevy_ecs::prelude::*;
 use glam::{DQuat, DVec3};
-use sim_core::{
-    Autopilot, EphemerisCache, Mission, PropulsionDrive, RigidBody, Spacecraft,
-};
+
+use crate::autopilot::Autopilot;
+use crate::components::{PropulsionDrive, RigidBody, Spacecraft};
+use crate::ephemeris::EphemerisCache;
+use crate::mission::Mission;
 
 /// High-level thrust direction selector. The body-bound variants resolve
 /// against the ephemeris cache each tick, so even a fast-moving Mars stays
@@ -79,6 +81,13 @@ impl ThrustController {
             ThrustMode::AwayFromSource => "away_from_source",
             ThrustMode::TowardBody(_) => "toward_body",
             ThrustMode::AwayFromBody(_) => "away_from_body",
+        }
+    }
+
+    pub fn target_body(&self) -> Option<i32> {
+        match self.mode {
+            ThrustMode::TowardBody(id) | ThrustMode::AwayFromBody(id) => Some(id),
+            _ => None,
         }
     }
 }

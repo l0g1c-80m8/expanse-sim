@@ -9,6 +9,7 @@ interface Props {
   failedAttempts?: number;
   wsUrl?: string;
   onReconnect?: () => void;
+  transport?: 'wasm' | 'ws';
 }
 
 const fmt = (n: number, digits = 2) =>
@@ -28,6 +29,7 @@ export function TelemetryPanel({
   failedAttempts = 0,
   wsUrl,
   onReconnect,
+  transport = 'ws',
 }: Props) {
   const showNotRunning =
     (status === 'connecting' && statusElapsedSec >= 3) ||
@@ -58,7 +60,11 @@ export function TelemetryPanel({
       </header>
 
       {showNotRunning && !frame && (
-        <NotConnectedHint wsUrl={wsUrl} onReconnect={onReconnect} />
+        <NotConnectedHint
+          wsUrl={wsUrl}
+          onReconnect={onReconnect}
+          transport={transport}
+        />
       )}
 
       {frame ? <SystemBlock frame={frame} /> : !showNotRunning && <Pending />}
@@ -74,10 +80,33 @@ export function TelemetryPanel({
 function NotConnectedHint({
   wsUrl,
   onReconnect,
+  transport,
 }: {
   wsUrl?: string;
   onReconnect?: () => void;
+  transport: 'wasm' | 'ws';
 }) {
+  if (transport === 'wasm') {
+    return (
+      <section className="space-y-2 border-y border-amber-500/20 -mx-4 px-4 py-3 bg-amber-500/5">
+        <div className="text-amber-200 text-[11px] leading-snug">
+          Loading the WebAssembly simulator…
+        </div>
+        <div className="text-[10px] text-slate-400 leading-snug">
+          The browser is downloading and instantiating the WASM module.
+          First load is ~700 KB; cached on subsequent visits.
+        </div>
+        {onReconnect && (
+          <button
+            onClick={onReconnect}
+            className="w-full mt-1 py-1.5 rounded text-[10px] uppercase tracking-wider bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-100 transition-colors"
+          >
+            Retry now
+          </button>
+        )}
+      </section>
+    );
+  }
   return (
     <section className="space-y-2 border-y border-amber-500/20 -mx-4 px-4 py-3 bg-amber-500/5">
       <div className="text-amber-200 text-[11px] leading-snug">
@@ -93,6 +122,9 @@ function NotConnectedHint({
         <code className="text-slate-300">
           cargo run --release -p sim_server
         </code>
+        <br />
+        Or switch to <span className="text-violet-200">WASM</span> mode in the
+        header to run in-browser.
       </div>
       {onReconnect && (
         <button

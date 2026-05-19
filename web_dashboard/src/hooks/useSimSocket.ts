@@ -83,6 +83,12 @@ export function useSimSocket(url: string): UseSimSocketResult {
   // (latter is bumped by scheduleReconnect to trigger a retry).
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    // Empty URL = disabled. Callers (useSimTransport) use this to suppress
+    // the WS branch when WASM is active without yanking the hook order.
+    if (!url) {
+      setStatus('idle');
+      return;
+    }
     // Don't connect again while a socket is still open / connecting.
     if (
       socketRef.current &&
