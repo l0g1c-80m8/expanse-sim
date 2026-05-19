@@ -57,6 +57,12 @@ const MOON_PARENTS: Record<string, string> = {
 
 const isMoon = (name: string) => Object.prototype.hasOwnProperty.call(MOON_PARENTS, name);
 
+/**
+ * Modifier-aware body click. The dashboard wires plain-click to "set target"
+ * (the most common operator action) and shift-click to "focus camera here".
+ */
+export type BodyClickModifiers = { shift: boolean };
+
 interface Props {
   bodies: BodySnapshot[];
   spacecraft: SpacecraftSnapshot | null;
@@ -64,7 +70,7 @@ interface Props {
   view: ViewSettings;
   nav?: NavEstimate | null;
   breadcrumbs?: Float32Array;
-  onBodyClick?: (bodyId: number) => void;
+  onBodyClick?: (bodyId: number, mods: BodyClickModifiers) => void;
 }
 
 export function SolarSystem({
@@ -100,7 +106,11 @@ export function SolarSystem({
               ? 'target'
               : null
           }
-          onClick={onBodyClick ? () => onBodyClick(b.id) : undefined}
+          onClick={
+            onBodyClick
+              ? (mods) => onBodyClick(b.id, mods)
+              : undefined
+          }
         />
       ))}
 
@@ -206,7 +216,7 @@ function Body({
   showOrbit: boolean;
   showLabel: boolean;
   highlight: 'source' | 'target' | null;
-  onClick?: () => void;
+  onClick?: (mods: BodyClickModifiers) => void;
 }) {
   const pos = metersToSceneUnits(body.position);
   const radius = visualRadius(body.name);
@@ -251,7 +261,9 @@ function Body({
           onClick={(e) => {
             if (!onClick) return;
             e.stopPropagation();
-            onClick();
+            // R3F passes the original DOM event through `nativeEvent`.
+            const native = e.nativeEvent as MouseEvent | undefined;
+            onClick({ shift: native?.shiftKey ?? false });
           }}
           onPointerOver={(e) => {
             if (!onClick) return;

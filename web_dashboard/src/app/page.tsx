@@ -144,10 +144,21 @@ export default function Dashboard() {
               view={view}
               nav={frame.nav}
               breadcrumbs={breadcrumbs}
-              onBodyClick={(id) => {
-                // The Sun's id is 10; treat as the 'sun' shorthand so the
-                // CameraFocus helper sets a sensible default zoom.
-                setCameraFocus(id === 10 ? 'sun' : id);
+              onBodyClick={(id, mods) => {
+                // Shift-click focuses the camera (legacy behaviour); plain
+                // click sets the mission target so operators can re-aim the
+                // autopilot from the scene without opening a panel. The Sun
+                // is camera-focus only — picking it as a target makes no
+                // sense for a rendezvous.
+                if (mods.shift || id === 10) {
+                  setCameraFocus(id === 10 ? 'sun' : id);
+                } else {
+                  send({
+                    type: 'set_mission',
+                    source: frame.mission.source ?? null,
+                    target: id,
+                  });
+                }
               }}
             />
           ) : (
@@ -231,11 +242,13 @@ export default function Dashboard() {
                 <MissionPanel
                   mission={frame.mission}
                   bodies={frame.bodies}
+                  spacecraft={frame.spacecraft}
                   send={send}
                 />
                 <AutopilotPanel
                   autopilot={frame.autopilot}
                   spacecraft={frame.spacecraft}
+                  targetId={frame.mission.target}
                   initialMass={initialMassRef.current}
                   send={send}
                 />

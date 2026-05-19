@@ -124,10 +124,16 @@ pub fn apply_command(
                 .get_resource::<SimModeState>()
                 .map(|m| m.mode)
                 .unwrap_or(SimMode::Sandbox);
+            // Idempotent: no resource writes or thrust resets if the mode
+            // hasn't actually changed. Without this the UI's mode toggle
+            // could fire a write every render and stutter the worker.
+            if was == new_mode {
+                return;
+            }
             if let Some(mut state) = sim.world.get_resource_mut::<SimModeState>() {
                 state.mode = new_mode;
             }
-            if was != new_mode && matches!(new_mode, SimMode::Sandbox) {
+            if matches!(new_mode, SimMode::Sandbox) {
                 // Leaving Mission: cut autopilot + thrust so the ship coasts.
                 if let Some(mut ap) = sim.world.get_resource_mut::<Autopilot>() {
                     ap.engaged = false;
@@ -153,6 +159,10 @@ pub fn apply_command(
             }
         }
         ControlCommand::StartMission { source, target, accel_g, warp } => {
+            // Engage the autopilot from wherever the ship currently is —
+            // we no longer teleport to the source body's parking orbit.
+            // Staging is still available as the explicit `StageAtSource`
+            // command for users who want the ship reset to a clean start.
             if (source.is_some() || target.is_some())
                 && let Some(mut m) = sim.world.get_resource_mut::<Mission>() {
                     if let Some(s) = source { m.source_body = Some(s); }
@@ -161,12 +171,14 @@ pub fn apply_command(
             if let Some(mut state) = sim.world.get_resource_mut::<SimModeState>() {
                 state.mode = SimMode::Mission;
             }
-            stage_at_source(sim, *spacecraft_entity);
             if let Some(mut ap) = sim.world.get_resource_mut::<Autopilot>() {
                 ap.engaged = true;
                 if let Some(g) = accel_g {
                     ap.accel_g = g.max(0.0);
                 }
+                // Reset phase so the AutopilotPanel's progress baseline gets
+                // re-anchored from the current range rather than a stale one.
+                ap.phase = AutopilotPhase::Boost;
             }
             if let Some(w) = warp {
                 sim.set_warp(w.max(0.0));

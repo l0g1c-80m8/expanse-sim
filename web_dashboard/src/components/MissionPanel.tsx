@@ -1,35 +1,39 @@
 'use client';
 
 import { useState } from 'react';
-import { Play, Rocket, Target as TargetIcon } from 'lucide-react';
+import { MousePointer2, Play, Target as TargetIcon } from 'lucide-react';
 import type {
   BodySnapshot,
   ControlCommand,
   MissionSnapshot,
+  SpacecraftSnapshot,
 } from '@/lib/telemetry';
 
 interface Props {
   mission: MissionSnapshot;
   bodies: BodySnapshot[];
+  spacecraft: SpacecraftSnapshot | null;
   send: (cmd: ControlCommand) => void;
 }
 
 const TRANSIT_WARPS = [100, 1_000, 10_000, 100_000];
 
-export function MissionPanel({ mission, bodies, send }: Props) {
-  // Sun isn't a useful source/target — exclude it from the picker.
+export function MissionPanel({ mission, bodies, spacecraft, send }: Props) {
+  // Sun isn't a useful target — exclude it from the picker.
   const choices = bodies.filter((b) => b.name !== 'Sun');
   const [accelG, setAccelG] = useState(1.0);
   // High default so a 3-day Earth-Mars transit at 1g fits in ~26 seconds
   // of wall time instead of 12 hours at the dashboard's idle 60× warp.
   const [transitWarp, setTransitWarp] = useState(10_000);
 
-  const update = (
-    source: number | null,
-    target: number | null,
-  ) => send({ type: 'set_mission', source, target });
+  const setTarget = (target: number | null) =>
+    send({ type: 'set_mission', source: mission.source, target });
 
-  const ready = mission.source != null && mission.target != null;
+  const target = bodies.find((b) => b.id === mission.target);
+  const ready = mission.target != null;
+  // Nearest body to the ship — useful as a "you are here" readout now that
+  // the source dropdown is gone. We only show it when telemetry is live.
+  const nearest = spacecraft ? nearestBody(spacecraft, bodies) : null;
 
   return (
     <aside className="pointer-events-auto w-80 bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4 text-xs font-mono space-y-3 shadow-xl">
@@ -37,38 +41,37 @@ export function MissionPanel({ mission, bodies, send }: Props) {
         <span className="text-[10px] uppercase tracking-widest text-slate-400">
           Mission
         </span>
-        <span className="text-[10px] text-slate-500">
-          source → target
-        </span>
+        <span className="text-[10px] text-slate-500">target body</span>
       </header>
 
-      <div className="space-y-2">
-        <BodyPicker
-          icon={<Rocket className="w-3.5 h-3.5 text-emerald-300" />}
-          label="source"
-          selected={mission.source}
-          choices={choices}
-          onChange={(v) => update(v, mission.target)}
-          accent="emerald"
-        />
-        <BodyPicker
-          icon={<TargetIcon className="w-3.5 h-3.5 text-rose-300" />}
-          label="target"
-          selected={mission.target}
-          choices={choices}
-          onChange={(v) => update(mission.source, v)}
-          accent="rose"
-        />
+      <div className="flex items-start gap-2 text-[10px] text-slate-400 bg-white/5 border border-white/10 rounded-lg p-2">
+        <MousePointer2 className="w-3 h-3 mt-0.5 shrink-0 text-cyan-300" />
+        <span>
+          Click any planet or moon in the scene to set it as the target — the
+          autopilot retargets immediately while engaged.
+        </span>
       </div>
 
-      <button
-        onClick={() => send({ type: 'stage_at_source' })}
-        disabled={mission.source == null}
-        className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-30 disabled:cursor-not-allowed border border-emerald-500/30 text-emerald-200 rounded-lg py-1.5 text-[10px] uppercase tracking-wider transition-colors"
-        title="Reposition the spacecraft to the source body's current orbit"
-      >
-        Stage at source
-      </button>
+      <BodyPicker
+        icon={<TargetIcon className="w-3.5 h-3.5 text-rose-300" />}
+        label="target"
+        selected={mission.target}
+        choices={choices}
+        onChange={setTarget}
+      />
+
+      {nearest && (
+        <div className="flex justify-between text-[10px] text-slate-500">
+          <span>you are here</span>
+          <span className="text-slate-300">
+            {nearest.name} · {nearest.distanceKm < 1000
+              ? `${nearest.distanceKm.toFixed(0)} km`
+              : nearest.distanceKm < 1.0e6
+              ? `${(nearest.distanceKm / 1000).toFixed(2)} Mm`
+              : `${(nearest.distanceKm / 1.495_978_707e8).toFixed(3)} AU`}
+          </span>
+        </div>
+      )}
 
       <div className="border-t border-white/10 pt-3 space-y-2">
         <label className="flex items-center gap-2">
@@ -110,7 +113,6 @@ export function MissionPanel({ mission, bodies, send }: Props) {
           onClick={() =>
             send({
               type: 'start_mission',
-              source: mission.source ?? undefined,
               target: mission.target ?? undefined,
               accel_g: accelG,
               warp: transitWarp,
@@ -118,21 +120,47 @@ export function MissionPanel({ mission, bodies, send }: Props) {
           }
           disabled={!ready}
           className="w-full flex items-center justify-center gap-2 bg-cyan-500/25 hover:bg-cyan-500/35 disabled:opacity-30 disabled:cursor-not-allowed border border-cyan-500/50 text-cyan-100 rounded-lg py-2 text-xs uppercase tracking-wider transition-colors"
-          title="Switch to Mission mode, stage at source, engage autopilot, and bump warp in one shot"
+          title="Switch to Mission mode, engage autopilot toward the selected target from the ship's current state, and bump warp"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
           Plan &amp; Run
         </button>
+        <button
+          onClick={() => send({ type: 'stage_at_source' })}
+          disabled={mission.source == null}
+          className="w-full bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed border border-white/10 text-slate-300 rounded-lg py-1 text-[10px] uppercase tracking-wider transition-colors"
+          title="Optional: teleport the spacecraft back to the source body's parking orbit for a clean start"
+        >
+          Restage at source
+        </button>
       </div>
 
-      {ready && (
-        <TransitEstimate
-          source={bodies.find((b) => b.id === mission.source)}
-          target={bodies.find((b) => b.id === mission.target)}
-        />
+      {ready && spacecraft && target && (
+        <TransitEstimate spacecraft={spacecraft} target={target} />
       )}
     </aside>
   );
+}
+
+function nearestBody(
+  spacecraft: SpacecraftSnapshot,
+  bodies: BodySnapshot[],
+): { name: string; distanceKm: number } | null {
+  let bestName: string | null = null;
+  let bestD = Infinity;
+  for (const b of bodies) {
+    if (b.name === 'Sun') continue;
+    const dx = b.position[0] - spacecraft.position[0];
+    const dy = b.position[1] - spacecraft.position[1];
+    const dz = b.position[2] - spacecraft.position[2];
+    const d = Math.hypot(dx, dy, dz);
+    if (d < bestD) {
+      bestD = d;
+      bestName = b.name;
+    }
+  }
+  if (!bestName) return null;
+  return { name: bestName, distanceKm: bestD / 1000 };
 }
 
 function BodyPicker({
@@ -141,19 +169,13 @@ function BodyPicker({
   selected,
   choices,
   onChange,
-  accent,
 }: {
   icon: React.ReactNode;
   label: string;
   selected: number | null;
   choices: BodySnapshot[];
   onChange: (id: number | null) => void;
-  accent: 'emerald' | 'rose';
 }) {
-  const ring =
-    accent === 'emerald'
-      ? 'focus:ring-emerald-500/40 border-emerald-500/30'
-      : 'focus:ring-rose-500/40 border-rose-500/30';
   return (
     <label className="flex items-center gap-2">
       {icon}
@@ -163,7 +185,7 @@ function BodyPicker({
         onChange={(e) =>
           onChange(e.target.value === '' ? null : Number(e.target.value))
         }
-        className={`flex-1 bg-black/40 border ${ring} text-slate-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-2`}
+        className="flex-1 bg-black/40 border border-rose-500/30 text-slate-200 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-rose-500/40"
       >
         <option value="" className="bg-slate-900">
           —
@@ -179,50 +201,52 @@ function BodyPicker({
 }
 
 const AU = 1.495_978_707e11;
-const MU_SUN = 1.327_124_400_18e20;
 
 /**
- * Quick Hohmann + brachistochrone transit-time estimates.
- *
- * Hohmann: t = π · √( (r1 + r2)³ / (8 · μ) )
- * Brach (constant 1 g):  t = 2 · √( d / a )  where a = 9.81 m/s², d is the
- *   straight-line current distance — useful as a "back of envelope" order-
- *   of-magnitude figure even though it ignores gravity gradients.
+ * Order-of-magnitude transit estimates from the *ship's current state* to
+ * the target body. The brachistochrone TOF (2·√(d/a)) is the headline
+ * figure since that's what the autopilot actually flies. We also surface
+ * the closing speed so the operator can sanity-check whether the geometry
+ * is favourable or whether they're chasing a body that's racing away.
  */
 function TransitEstimate({
-  source,
+  spacecraft,
   target,
 }: {
-  source: BodySnapshot | undefined;
-  target: BodySnapshot | undefined;
+  spacecraft: SpacecraftSnapshot;
+  target: BodySnapshot;
 }) {
-  if (!source || !target) return null;
-  const r1 = Math.hypot(...source.position);
-  const r2 = Math.hypot(...target.position);
-  const hohmann = Math.PI * Math.sqrt(Math.pow(r1 + r2, 3) / (8 * MU_SUN));
-  const d = Math.hypot(
-    source.position[0] - target.position[0],
-    source.position[1] - target.position[1],
-    source.position[2] - target.position[2],
-  );
+  const dx = target.position[0] - spacecraft.position[0];
+  const dy = target.position[1] - spacecraft.position[1];
+  const dz = target.position[2] - spacecraft.position[2];
+  const d = Math.hypot(dx, dy, dz);
   const brach1g = 2 * Math.sqrt(d / 9.81);
+  // Range-rate = −d|r|/dt; positive = approaching.
+  const dvx = target.velocity[0] - spacecraft.velocity[0];
+  const dvy = target.velocity[1] - spacecraft.velocity[1];
+  const dvz = target.velocity[2] - spacecraft.velocity[2];
+  const closingMs = d > 0 ? -(dx * dvx + dy * dvy + dz * dvz) / d : 0;
 
   return (
     <section className="border-t border-white/10 pt-3 space-y-1 text-[11px]">
       <div className="text-[10px] uppercase tracking-widest text-slate-500">
-        Order-of-magnitude
+        From ship → target
       </div>
       <div className="flex justify-between">
         <span className="text-slate-400">distance</span>
         <span className="text-slate-200">{(d / AU).toFixed(2)} AU</span>
       </div>
       <div className="flex justify-between">
-        <span className="text-slate-400">Hohmann</span>
-        <span className="text-amber-300">{fmtDuration(hohmann)}</span>
-      </div>
-      <div className="flex justify-between">
         <span className="text-slate-400">brach @ 1 g</span>
         <span className="text-cyan-300">{fmtDuration(brach1g)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-slate-400">closing</span>
+        <span
+          className={closingMs >= 0 ? 'text-emerald-300' : 'text-rose-300'}
+        >
+          {(closingMs / 1000).toFixed(2)} km/s
+        </span>
       </div>
     </section>
   );

@@ -50,7 +50,12 @@ let effectiveWarp = 0;
 // MAX_TICKS_PER_FRAME ticks so the worker doesn't starve its message pump.
 let budget = 0;
 let lastWallMs = 0;
-const MAX_TICKS_PER_FRAME = 50_000;
+// Keep each batch short so commands queued from the UI (mode toggle, set
+// target, …) get drained within ~one rAF frame. 50 k ticks * 0.05 s/tick is
+// 2500 s of sim time per batch — that took ~0.5 s of CPU at high warp,
+// freezing the worker. 5 k keeps us under ~50 ms per batch on a laptop,
+// which is the budget for a 60 Hz UI to stay responsive.
+const MAX_TICKS_PER_FRAME = 5_000;
 // Minimum interval between worker iterations when nothing's queued — we lean
 // on requestAnimationFrame-ish 16 ms cadence for telemetry emit smoothness.
 const IDLE_DELAY_MS = 16;

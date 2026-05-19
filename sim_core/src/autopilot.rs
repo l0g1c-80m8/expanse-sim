@@ -32,7 +32,7 @@ use glam::{DQuat, DVec3};
 use serde::{Deserialize, Serialize};
 
 use crate::components::{PropulsionDrive, RigidBody, Spacecraft};
-use crate::ephemeris::{park_orbit_state, EphemerisCache};
+use crate::ephemeris::{park_orbit_state, propagate_keplerian, BodyParams, BodyState, EphemerisCache, MU_SUN};
 use crate::mission::Mission;
 
 /// Standard gravity (m/s²) used to convert "Expanse-style" g-loads into
@@ -129,16 +129,26 @@ pub fn brachistochrone_tof(d: f64, a: f64) -> f64 {
 /// Iteratively predict the intercept point and brachistochrone time-of-flight,
 /// leading a moving target by its velocity. Fixed-point converges in a
 /// handful of iterations for any sensible solar-system geometry.
+///
+/// Pass `Some(propagator)` to lead the target along its orbital arc rather
+/// than along its instantaneous velocity vector. The linear approximation
+/// breaks down for transit times comparable to the target's orbital period
+/// (e.g. catching an inner planet on the far side of the Sun), where the
+/// target has already curved a noticeable fraction of an orbit by intercept.
 pub fn predict_intercept(
     ship_pos: DVec3,
     target_pos: DVec3,
     target_vel: DVec3,
     accel: f64,
+    propagator: Option<&dyn Fn(f64) -> BodyState>,
 ) -> (DVec3, f64) {
     let mut intercept = target_pos;
     let mut tof = brachistochrone_tof((intercept - ship_pos).length(), accel);
     for _ in 0..6 {
-        intercept = target_pos + target_vel * tof;
+        intercept = match propagator {
+            Some(p) => p(tof).position,
+            None => target_pos + target_vel * tof,
+        };
         let d = (intercept - ship_pos).length();
         tof = brachistochrone_tof(d, accel);
     }
@@ -152,6 +162,39 @@ pub fn braking_distance(v: f64, a: f64) -> f64 {
         return f64::INFINITY;
     }
     v * v / (2.0 * a)
+}
+
+/// Build a closure that returns the target's expected `BodyState` `dt`
+/// seconds after `now_t` (sim epoch seconds), using Keplerian propagation
+/// when the target carries elements. Returns `None` for bodies without
+/// elements (pinned synthetic targets, Sun in heliocentric coords) — the
+/// caller should fall back to linear leading.
+///
+/// For moons / sub-satellites we propagate the relative orbit around the
+/// parent and treat the parent's heliocentric motion as linear over `dt`.
+/// Brief transit times relative to the parent's period make this exact
+/// enough for autopilot guidance; precision below 1 km isn't useful when
+/// the arrival tolerance is 50,000 km anyway.
+fn keplerian_propagator(
+    target_params: Option<BodyParams>,
+    bodies: &[BodyParams],
+    target_now: BodyState,
+    now_t: f64,
+) -> Option<impl Fn(f64) -> BodyState + use<>> {
+    let params = target_params?;
+    let kepler = params.kepler?;
+    let parent = params.parent_body;
+    let parent_mu = parent
+        .and_then(|pid| bodies.iter().find(|b| b.id == pid).map(|b| b.mu))
+        .unwrap_or(MU_SUN);
+    Some(move |dt: f64| {
+        let rel_now = propagate_keplerian(&kepler, parent_mu, now_t);
+        let rel_then = propagate_keplerian(&kepler, parent_mu, now_t + dt);
+        BodyState {
+            position: target_now.position + (rel_then.position - rel_now.position),
+            velocity: rel_then.velocity + (target_now.velocity - rel_now.velocity),
+        }
+    })
 }
 
 /// Zero-Effort-Miss / Zero-Effort-Velocity rendezvous guidance.
@@ -189,6 +232,8 @@ pub fn autopilot_system(
     mission: Res<Mission>,
     mode: Res<crate::mode::SimModeState>,
     cache: Option<Res<EphemerisCache>>,
+    sim_time: Res<crate::clock::SimTime>,
+    sim_clock: Res<crate::clock::SimClock>,
     mut q: Query<(&mut RigidBody, &mut PropulsionDrive), With<Spacecraft>>,
 ) {
     // In Sandbox mode the autopilot is silent regardless of engage state —
@@ -235,10 +280,8 @@ pub fn autopilot_system(
     // body's centre (so synthetic test targets behave as before). This is
     // what makes the autopilot drop the ship *into orbit* around Mars
     // rather than aiming at Mars's geometric centre.
-    let target_params = cache
-        .bodies()
-        .into_iter()
-        .find(|b| b.id == target_id);
+    let bodies = cache.bodies();
+    let target_params = bodies.iter().copied().find(|b| b.id == target_id);
     let eff_target = target_params
         .and_then(|p| park_orbit_state(target, p))
         .unwrap_or(target);
@@ -272,27 +315,31 @@ pub fn autopilot_system(
         return;
     }
 
-    // Seed time-to-go from a brachistochrone estimate, then *expand* tgo
-    // until the ZEM/ZEV-commanded acceleration fits within our actual
-    // thrust budget. Without this expansion the controller demands an
-    // unbounded acceleration whenever the relative velocity is poorly
-    // aligned with `rel_pos` — the classic ZEM/ZEV failure mode under
-    // bounded actuation. Growing tgo slows the commanded profile until it
-    // becomes feasible, which is provably stable.
+    // Seed time-to-go from a brachistochrone estimate, leading the target
+    // along its real orbital arc (Keplerian) when we know its elements —
+    // otherwise the linear lead under-shoots whenever the transit time is a
+    // sizeable fraction of the target's period (e.g. Earth → Mercury).
+    let now_t = sim_clock.epoch_j2000 + sim_time.time;
+    let propagator = keplerian_propagator(target_params, &bodies, target, now_t);
     let (_intercept_pos, mut tgo) = predict_intercept(
         rb.position,
         eff_target.position,
         eff_target.velocity,
         accel,
+        propagator.as_ref().map(|p| p as &dyn Fn(f64) -> BodyState),
     );
     tgo = tgo.max(1.0);
     // Headroom: command at most 90 % of budget so there's bandwidth for
     // unmodelled disturbances (mass loss during burn, gravity gradients
     // when enabled, etc.).
     let a_budget = accel * 0.9;
+    // Cap tgo expansion so a degenerate geometry (e.g. ship sitting at the
+    // target with non-zero relative velocity) doesn't iterate forever.
+    // 10 years is well past any solar-system transit at ≥0.1 g.
+    const MAX_TGO_S: f64 = 10.0 * 365.25 * 86_400.0;
     let mut a_cmd = zem_zev_accel(rel_pos, rel_vel, tgo);
-    for _ in 0..40 {
-        if a_cmd.length() <= a_budget {
+    for _ in 0..60 {
+        if a_cmd.length() <= a_budget || tgo >= MAX_TGO_S {
             break;
         }
         tgo *= 1.3;
@@ -354,7 +401,7 @@ mod tests {
         // Stationary target 1000 m away, 10 m/s² accel → straight shot.
         let ship = DVec3::ZERO;
         let target = DVec3::new(1000.0, 0.0, 0.0);
-        let (intercept, tof) = predict_intercept(ship, target, DVec3::ZERO, 10.0);
+        let (intercept, tof) = predict_intercept(ship, target, DVec3::ZERO, 10.0, None);
         assert_relative_eq!(intercept.x, 1000.0, epsilon = 1e-9);
         // tof = 2*sqrt(1000/10) = 20 s
         assert_relative_eq!(tof, 20.0, epsilon = 1e-9);
@@ -365,7 +412,8 @@ mod tests {
         let ship = DVec3::ZERO;
         let target_pos = DVec3::new(1000.0, 0.0, 0.0);
         let target_vel = DVec3::new(0.0, 50.0, 0.0);
-        let (intercept, tof) = predict_intercept(ship, target_pos, target_vel, 10.0);
+        let (intercept, tof) =
+            predict_intercept(ship, target_pos, target_vel, 10.0, None);
         // Intercept must lead the target along its velocity vector.
         assert!(intercept.y > 0.0, "intercept should lead +y, got {}", intercept.y);
         // Geometrically: the predicted intercept and the predicted tof must
@@ -389,6 +437,11 @@ mod tests {
         crate::mode::SimModeState { mode: crate::mode::SimMode::Mission }
     }
 
+    fn install_clocks(world: &mut World) {
+        world.insert_resource(crate::clock::SimTime::new(0.05));
+        world.insert_resource(crate::clock::SimClock::default());
+    }
+
     #[test]
     fn autopilot_idle_when_disengaged() {
         let mut world = World::new();
@@ -397,6 +450,7 @@ mod tests {
         world.insert_resource(Mission::default());
         world.insert_resource(mission_mode());
         world.insert_resource(EphemerisCache::with_default_bodies());
+        install_clocks(&mut world);
         let mut schedule = Schedule::default();
         schedule.add_systems(autopilot_system);
         schedule.run(&mut world);
@@ -417,6 +471,7 @@ mod tests {
         world.insert_resource(Mission::default()); // no target
         world.insert_resource(mission_mode());
         world.insert_resource(EphemerisCache::with_default_bodies());
+        install_clocks(&mut world);
         world.spawn((
             Spacecraft { id: 1 },
             RigidBody::default(),
@@ -438,6 +493,7 @@ mod tests {
         world.insert_resource(Mission::new(naif::SUN, naif::EARTH));
         world.insert_resource(mission_mode());
         world.insert_resource(EphemerisCache::with_default_bodies());
+        install_clocks(&mut world);
 
         let earth = world
             .resource::<EphemerisCache>()

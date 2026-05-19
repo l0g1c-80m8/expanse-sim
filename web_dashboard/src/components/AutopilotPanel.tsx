@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Cpu, Gauge } from 'lucide-react';
 import type {
   AutopilotPhase,
@@ -12,6 +12,10 @@ import type {
 interface Props {
   autopilot: AutopilotSnapshot;
   spacecraft?: SpacecraftSnapshot | null;
+  /** Currently selected target body id. When this changes, the progress
+   * baseline must reset — otherwise % progress is computed against the
+   * previous target's range and lies. */
+  targetId?: number | null;
   /** Mass-at-engagement, used to compute Δv spent via Tsiolkovsky. The
    * caller (page.tsx) tracks this — we don't have launch state here. */
   initialMass?: number | null;
@@ -37,6 +41,7 @@ const PHASE_LABELS: Record<AutopilotPhase, string> = {
 export function AutopilotPanel({
   autopilot,
   spacecraft,
+  targetId,
   initialMass,
   send,
 }: Props) {
@@ -46,6 +51,11 @@ export function AutopilotPanel({
   // has a fair denominator. Without this baseline the % flips around as the
   // ZEM/ZEV iteration revises tgo each tick.
   const baselineRange = useRef<number | null>(null);
+  // Reset the baseline when the operator picks a new target — the progress
+  // bar is meaningful only against the active leg of the transit.
+  useEffect(() => {
+    baselineRange.current = null;
+  }, [targetId]);
   if (!autopilot.engaged) {
     baselineRange.current = null;
   } else if (
