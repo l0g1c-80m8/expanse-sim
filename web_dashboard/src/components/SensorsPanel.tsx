@@ -70,6 +70,7 @@ export function SensorsPanel({ sensors, bodies, send }: Props) {
     bodies.find((b) => b.name === 'Mars')?.id ?? null,
   );
   const [open, setOpen] = useState(false);
+  const [lightTimeDelay, setLightTimeDelay] = useState(false);
 
   const reading =
     selectedBody != null
@@ -119,6 +120,29 @@ export function SensorsPanel({ sensors, bodies, send }: Props) {
               </button>
             ))}
           </div>
+          <label className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              checked={lightTimeDelay}
+              onChange={(e) => {
+                setLightTimeDelay(e.target.checked);
+                send({
+                  type: 'set_sensor_config',
+                  light_time_delay: e.target.checked,
+                });
+              }}
+              className="accent-fuchsia-400"
+            />
+            <span className="text-slate-300 text-[10px]">
+              Light-time delay
+            </span>
+            <span
+              className="text-slate-500 text-[9px]"
+              title="Range / range-rate reflect where the body was r/c seconds ago — the real DSN observation. Important for EKF benchmarking at outer-planet ranges."
+            >
+              ⓘ
+            </span>
+          </label>
         </section>
       )}
 

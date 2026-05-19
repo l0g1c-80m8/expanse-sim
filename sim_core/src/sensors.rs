@@ -87,6 +87,12 @@ pub struct SensorConfig {
     /// Enable / disable. When false the system runs but writes zero-σ
     /// readings — useful for "ground truth" replay.
     pub enabled: bool,
+    /// Apply one-way light-time delay to range / range-rate readings. When
+    /// true, the body's position is propagated linearly *backwards* by
+    /// `range / c` before the range / Doppler observation is computed.
+    /// Off by default so existing nav-filter tests (which assume zero
+    /// delay) keep passing; flip on for realistic DSN-style observations.
+    pub light_time_delay: bool,
 }
 
 impl Default for SensorConfig {
@@ -100,6 +106,7 @@ impl Default for SensorConfig {
             gyro_sigma_rad_s: 1.0e-6,
             star_tracker_sigma_rad: 1.0e-5,
             enabled: true,
+            light_time_delay: false,
         }
     }
 }
@@ -189,14 +196,32 @@ pub fn sensor_system(
 
     let mut pack = SensorPack::default();
 
+    // Speed of light (m/s). Used by the optional light-time-delay path.
+    const C_M_S: f64 = 299_792_458.0;
+
     for (b, state) in cache.all_states() {
-        let rel = state.position - rb.position;
+        // If light-time delay is on, the observation we see at sim-time `t`
+        // came from where the body actually was `range/c` seconds ago.
+        // First pass: compute the current geometric range; second pass:
+        // shift the body's position back along its velocity by τ = range/c
+        // and recompute. One iteration is enough — light-time τ << the
+        // body's orbital period, so a linear back-step is accurate to
+        // O((vτ)²/c²) — i.e., bounded by (30 km/s · 22 min / c)² ≈ 10⁻¹⁰.
+        let (eff_position, eff_velocity) = if cfg.light_time_delay {
+            let rough_range = (state.position - rb.position).length();
+            let tau = rough_range / C_M_S;
+            (state.position - state.velocity * tau, state.velocity)
+        } else {
+            (state.position, state.velocity)
+        };
+
+        let rel = eff_position - rb.position;
         let range = rel.length();
         if range < 1.0 {
             continue;
         }
         let los = rel / range;
-        let rel_v = state.velocity - rb.velocity;
+        let rel_v = eff_velocity - rb.velocity;
         let closing = -rel_v.dot(los); // +closing ⇒ approaching
 
         let mut rng = XorShift64::new(seed_for(sim_time.time, b.id as u64));
@@ -367,6 +392,73 @@ mod tests {
         for (ra, rb) in a.ranges.iter().zip(b.ranges.iter()) {
             assert_relative_eq!(ra.range_m, rb.range_m, epsilon = 0.0);
         }
+    }
+
+    #[test]
+    fn light_time_delay_shifts_observed_range_toward_past_body_position() {
+        // With light-time delay on, the observed range to a body should be
+        // the distance to where the body WAS one light-time ago — for a
+        // body moving away from us, that's a shorter range than the
+        // geometric "now" range.
+        let mut w_off = world_with_ship();
+        let mut w_on = world_with_ship();
+        w_on.resource_mut::<SensorConfig>().light_time_delay = true;
+
+        // Place a fast-moving synthetic body well clear of the default
+        // roster. We pin its state directly so we know the answer.
+        for w in [&mut w_off, &mut w_on] {
+            let cache = w.resource::<EphemerisCache>().clone();
+            cache.set_state(
+                crate::ephemeris::BodyParams {
+                    id: 9999,
+                    name: "Probe",
+                    mu: 0.0,
+                    radius: 1.0,
+                    kepler: None,
+                    parent_body: None,
+                },
+                crate::ephemeris::BodyState {
+                    // 1 AU "ahead" of the ship's +x; moving at +30 km/s in +x
+                    // (i.e. away from the ship, so light-time path shortens).
+                    position: DVec3::new(1.5e11 + crate::ephemeris::AU, 0.0, 0.0),
+                    velocity: DVec3::new(30_000.0, 0.0, 0.0),
+                },
+            );
+        }
+        let mut sched_off = Schedule::default();
+        sched_off.add_systems(sensor_system);
+        let mut sched_on = Schedule::default();
+        sched_on.add_systems(sensor_system);
+        sched_off.run(&mut w_off);
+        sched_on.run(&mut w_on);
+
+        let r_off = w_off
+            .resource::<LatestSensorPack>()
+            .0
+            .ranges
+            .iter()
+            .find(|r| r.body_id == 9999)
+            .unwrap()
+            .range_m;
+        let r_on = w_on
+            .resource::<LatestSensorPack>()
+            .0
+            .ranges
+            .iter()
+            .find(|r| r.body_id == 9999)
+            .unwrap()
+            .range_m;
+
+        // Expected light-time correction: τ ≈ r/c ≈ 1 AU / c ≈ 499 s.
+        // Body moves +30 km/s × 499 s ≈ 1.5e7 m in the +x direction over
+        // that interval — but we observe where it WAS, so the corrected
+        // range is shorter than the geometric "now" range by ≈ that delta.
+        let delta = r_off - r_on;
+        assert!(
+            delta > 1.0e7 && delta < 2.0e7,
+            "expected light-time correction in 10–20 Mm range, got Δ={} m",
+            delta,
+        );
     }
 
     #[test]

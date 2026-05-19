@@ -69,6 +69,7 @@ pub enum ControlCommand {
         accel_sigma_m_s2: Option<f64>,
         gyro_sigma_rad_s: Option<f64>,
         star_tracker_sigma_rad: Option<f64>,
+        light_time_delay: Option<bool>,
     },
     #[serde(rename = "set_mode")]
     SetMode { mode: String },
@@ -478,6 +479,7 @@ pub fn apply_command(
             accel_sigma_m_s2,
             gyro_sigma_rad_s,
             star_tracker_sigma_rad,
+            light_time_delay,
         } => {
             if let Some(mut cfg) = sim.world.get_resource_mut::<SensorConfig>() {
                 if let Some(v) = enabled { cfg.enabled = v; }
@@ -490,6 +492,7 @@ pub fn apply_command(
                 if let Some(v) = star_tracker_sigma_rad {
                     cfg.star_tracker_sigma_rad = v.max(0.0);
                 }
+                if let Some(v) = light_time_delay { cfg.light_time_delay = v; }
             }
         }
         ControlCommand::SetMode { mode } => {

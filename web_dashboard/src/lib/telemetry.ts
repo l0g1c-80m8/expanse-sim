@@ -134,6 +134,7 @@ export type ControlCommand =
       accel_sigma_m_s2?: number;
       gyro_sigma_rad_s?: number;
       star_tracker_sigma_rad?: number;
+      light_time_delay?: boolean;
     }
   | { type: 'set_mode'; mode: SimMode }
   | {
