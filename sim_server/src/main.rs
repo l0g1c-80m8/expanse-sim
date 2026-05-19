@@ -35,8 +35,9 @@ struct Cli {
     #[arg(long, default_value = "127.0.0.1:8080")]
     bind: SocketAddr,
 
-    /// Fixed integration step (seconds).
-    #[arg(long, default_value_t = 0.05)]
+    /// Fixed integration step (seconds). 0.5 s matches sim_wasm's default;
+    /// drop to 0.05 for fine-grained close-proximity work.
+    #[arg(long, default_value_t = 0.5)]
     dt: f64,
 
     /// Initial time-warp multiplier.

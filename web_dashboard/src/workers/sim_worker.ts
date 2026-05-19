@@ -37,7 +37,7 @@ type SimWasmInstance = {
 
 let sim: SimWasmInstance | null = null;
 let running = false;
-let stride = 5;
+let stride = 2;
 let tickCount = BigInt(0);
 let pendingCommands: ControlCommand[] = [];
 
@@ -47,15 +47,20 @@ let simSecondsInWindow = 0;
 let effectiveWarp = 0;
 
 // Tick budget — wall_dt × warp accumulates here; each schedule retires up to
-// MAX_TICKS_PER_FRAME ticks so the worker doesn't starve its message pump.
+// MAX_TICKS_PER_FRAME ticks (hard cap) OR up to STEP_BUDGET_MS of wall time
+// (soft cap, whichever fires first) so the worker stays responsive to
+// commands queued by the UI.
 let budget = 0;
 let lastWallMs = 0;
-// Keep each batch short so commands queued from the UI (mode toggle, set
-// target, …) get drained within ~one rAF frame. 50 k ticks * 0.05 s/tick is
-// 2500 s of sim time per batch — that took ~0.5 s of CPU at high warp,
-// freezing the worker. 5 k keeps us under ~50 ms per batch on a laptop,
-// which is the budget for a 60 Hz UI to stay responsive.
+// Hard tick cap per batch. A modern laptop runs ≈3 k ticks/s inside the
+// WASM sim, so 5 k caps the worst-case batch around ~1.5 s. We rely on
+// STEP_BUDGET_MS to break out earlier on slower hardware.
 const MAX_TICKS_PER_FRAME = 5_000;
+// Soft wall-time cap — once a batch has consumed this much CPU it yields
+// and lets queued commands (mode toggle, set target, …) apply on the next
+// iteration. 80 ms balances responsiveness (~12 batches/s) against the
+// per-batch setTimeout overhead (4 ms minimum in workers).
+const STEP_BUDGET_MS = 80;
 // Minimum interval between worker iterations when nothing's queued — we lean
 // on requestAnimationFrame-ish 16 ms cadence for telemetry emit smoothness.
 const IDLE_DELAY_MS = 16;
@@ -79,7 +84,10 @@ async function init(basePath: string) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mod: any = await import(/* webpackIgnore: true */ /* @vite-ignore */ wasmJsUrl);
     await mod.default(wasmBinUrl);
-    sim = new mod.SimWasm(0.05, 60.0, true) as SimWasmInstance;
+    // 0.5 s integration step — matches sim_wasm::SimWasm::new_default and
+    // keeps high-warp transits feeling alive. Visualization-side smoothing
+    // (camera follow + drei <Line>) hides the step size at low warp.
+    sim = new mod.SimWasm(0.5, 60.0, true) as SimWasmInstance;
     post({ type: 'ready' });
   } catch (err) {
     post({
@@ -139,15 +147,24 @@ function step() {
   if (ticksToRun > MAX_TICKS_PER_FRAME) ticksToRun = MAX_TICKS_PER_FRAME;
 
   const ZERO = BigInt(0);
+  const batchStart = performance.now();
+  // Check the wall-time guard every CHECK_EVERY ticks — sampling per tick
+  // adds branch overhead, sampling once per batch defeats the purpose.
+  const CHECK_EVERY = 64;
+  let ticksDone = 0;
   for (let i = 0; i < ticksToRun; i++) {
     sim.tick();
     tickCount += BigInt(1);
     simSecondsInWindow += dt;
+    ticksDone++;
     if (tickCount % BigInt(stride) === ZERO) {
       emitFrame();
     }
+    if (i > 0 && i % CHECK_EVERY === 0 && performance.now() - batchStart > STEP_BUDGET_MS) {
+      break;
+    }
   }
-  budget -= ticksToRun * dt;
+  budget -= ticksDone * dt;
   if (budget > dt * MAX_TICKS_PER_FRAME) budget = dt * MAX_TICKS_PER_FRAME;
 
   // Roll the effective-warp window once per wall-second.
@@ -160,7 +177,7 @@ function step() {
 
   // If we ran no ticks (paused or just below stride), still emit a frame
   // every so often so the UI stays current.
-  if (ticksToRun === 0) {
+  if (ticksDone === 0) {
     emitFrame();
   }
 

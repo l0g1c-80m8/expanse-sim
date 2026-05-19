@@ -66,9 +66,17 @@ impl SimWasm {
     }
 
     /// Convenience constructor matching the dashboard's default knobs.
+    ///
+    /// dt = 0.5 s is the chosen baseline: small enough that RK4 still
+    /// resolves a parking-orbit revolution in ~30 substeps (good visual
+    /// continuity), large enough that high-warp playback isn't bottlenecked
+    /// by per-tick fixed costs (ECS schedule, gravity loop). At dt=0.05 the
+    /// wall-time-per-sim-day ceiling on a laptop was ~minute-scale, which
+    /// made interplanetary transits feel "stuck" even though the autopilot
+    /// was thrusting correctly.
     #[wasm_bindgen(js_name = newDefault)]
     pub fn new_default() -> SimWasm {
-        Self::new(0.05, 60.0, true)
+        Self::new(0.5, 60.0, true)
     }
 
     /// Advance the simulator by exactly one fixed `dt` tick.
