@@ -1,15 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Cpu, Gauge } from 'lucide-react';
 import type {
   AutopilotPhase,
   AutopilotSnapshot,
   ControlCommand,
+  SpacecraftSnapshot,
 } from '@/lib/telemetry';
 
 interface Props {
   autopilot: AutopilotSnapshot;
+  spacecraft?: SpacecraftSnapshot | null;
+  /** Mass-at-engagement, used to compute Δv spent via Tsiolkovsky. The
+   * caller (page.tsx) tracks this — we don't have launch state here. */
+  initialMass?: number | null;
   send: (cmd: ControlCommand) => void;
 }
 
@@ -29,8 +34,37 @@ const PHASE_LABELS: Record<AutopilotPhase, string> = {
   hold: '— HOLD',
 };
 
-export function AutopilotPanel({ autopilot, send }: Props) {
+export function AutopilotPanel({
+  autopilot,
+  spacecraft,
+  initialMass,
+  send,
+}: Props) {
   const [accelG, setAccelG] = useState(autopilot.accel_g || 1.0);
+
+  // Capture the maximum range we've seen since engage so the progress bar
+  // has a fair denominator. Without this baseline the % flips around as the
+  // ZEM/ZEV iteration revises tgo each tick.
+  const baselineRange = useRef<number | null>(null);
+  if (!autopilot.engaged) {
+    baselineRange.current = null;
+  } else if (
+    autopilot.engaged &&
+    Number.isFinite(autopilot.range_m) &&
+    (baselineRange.current == null || autopilot.range_m > baselineRange.current)
+  ) {
+    baselineRange.current = autopilot.range_m;
+  }
+  const progress =
+    autopilot.engaged && baselineRange.current && baselineRange.current > 0
+      ? Math.max(
+          0,
+          Math.min(
+            1,
+            (baselineRange.current - autopilot.range_m) / baselineRange.current,
+          ),
+        )
+      : 0;
 
   const toggle = () => {
     send({
@@ -102,7 +136,31 @@ export function AutopilotPanel({ autopilot, send }: Props) {
           accent={autopilot.closing_m_s > 0 ? 'text-emerald-300' : 'text-rose-300'}
         />
         <Row k="eta" v={fmtDuration(autopilot.eta_s)} />
+
+        {autopilot.engaged && baselineRange.current && (
+          <div className="space-y-0.5 pt-1">
+            <div className="flex justify-between text-[10px]">
+              <span className="text-slate-400">progress</span>
+              <span className="text-cyan-200">
+                {(progress * 100).toFixed(0)}%
+              </span>
+            </div>
+            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-amber-400 via-cyan-400 to-emerald-400 transition-all duration-300"
+                style={{ width: `${progress * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
       </section>
+
+      {spacecraft && (
+        <DeltaVBlock
+          spacecraft={spacecraft}
+          initialMass={initialMass ?? null}
+        />
+      )}
 
       <p className="text-[10px] text-slate-500 leading-tight">
         Engages a ZEM/ZEV guidance law that nulls both relative position and
@@ -128,6 +186,54 @@ function Row({
       <span className={accent ?? 'text-slate-200'}>{v}</span>
     </div>
   );
+}
+
+const G0 = 9.806_65;
+
+/**
+ * Δv accounting via Tsiolkovsky:
+ *   Δv_spent = Isp · g₀ · ln(m₀ / m_now)
+ *   Δv_remaining = Isp · g₀ · ln(m_now / m_dry)
+ * where m₀ is the operator-provided "mass at engage" baseline and m_dry =
+ * m_now − propellant_remaining (mass once tanks run dry).
+ */
+function DeltaVBlock({
+  spacecraft,
+  initialMass,
+}: {
+  spacecraft: SpacecraftSnapshot;
+  initialMass: number | null;
+}) {
+  const m_now = spacecraft.mass;
+  const m_dry = Math.max(1.0, spacecraft.mass - spacecraft.propellant_mass);
+  const dvSpent =
+    initialMass && initialMass > m_now
+      ? spacecraft.isp * G0 * Math.log(initialMass / m_now)
+      : 0;
+  const dvRemaining =
+    m_now > m_dry ? spacecraft.isp * G0 * Math.log(m_now / m_dry) : 0;
+
+  return (
+    <section className="space-y-1 border-t border-white/10 pt-3">
+      <div className="text-[10px] uppercase tracking-widest text-slate-500">
+        Δv budget
+      </div>
+      <Row k="spent" v={fmtDeltaV(dvSpent)} />
+      <Row
+        k="remaining"
+        v={fmtDeltaV(dvRemaining)}
+        accent={dvRemaining < 1000 ? 'text-amber-300' : 'text-emerald-300'}
+      />
+      <Row k="propellant" v={`${(spacecraft.propellant_mass / 1000).toFixed(1)} t`} />
+    </section>
+  );
+}
+
+function fmtDeltaV(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return '0 m/s';
+  if (v >= 1.0e6) return `${(v / 1.0e6).toFixed(2)} Mm/s`;
+  if (v >= 1.0e3) return `${(v / 1.0e3).toFixed(1)} km/s`;
+  return `${v.toFixed(0)} m/s`;
 }
 
 function fmtDist(m: number): string {

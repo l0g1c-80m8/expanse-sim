@@ -3,6 +3,24 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, Grid } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
+
+function formatSimTime(s: number): string {
+  if (!Number.isFinite(s)) return '—';
+  if (s < 60) return `${s.toFixed(1)} s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
+  if (s < 86_400) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+  if (s < 365 * 86_400) {
+    const d = Math.floor(s / 86_400);
+    const h = Math.floor((s % 86_400) / 3600);
+    return `${d}d ${h}h`;
+  }
+  const y = s / (365.25 * 86_400);
+  return `${y.toFixed(2)} yr`;
+}
 import { Crosshair, Settings } from 'lucide-react';
 import * as THREE from 'three';
 
@@ -51,6 +69,19 @@ export default function Dashboard() {
 
   const { frame, status, statusElapsedSec, failedAttempts, send, reconnect } =
     useSimTransport(transport, wsUrl, BASE_PATH);
+
+  // Capture mass-at-engage so the Δv-budget block can compute spent Δv via
+  // Tsiolkovsky. Resets when the autopilot disengages or arrives.
+  const initialMassRef = useRef<number | null>(null);
+  const lastEngagedRef = useRef<boolean>(false);
+  if (frame?.autopilot) {
+    const eng = frame.autopilot.engaged;
+    if (eng && !lastEngagedRef.current && frame.spacecraft) {
+      initialMassRef.current = frame.spacecraft.mass;
+    }
+    if (!eng) initialMassRef.current = null;
+    lastEngagedRef.current = eng;
+  }
 
   const updateTransport = (next: TransportMode) => {
     setTransport(next);
@@ -127,6 +158,11 @@ export default function Dashboard() {
               view={view}
               nav={frame.nav}
               breadcrumbs={breadcrumbs}
+              onBodyClick={(id) => {
+                // The Sun's id is 10; treat as the 'sun' shorthand so the
+                // CameraFocus helper sets a sensible default zoom.
+                setCameraFocus(id === 10 ? 'sun' : id);
+              }}
             />
           ) : (
             <Placeholder />
@@ -159,8 +195,11 @@ export default function Dashboard() {
               <h1 className="text-xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-indigo-300">
                 EXPANSE SIM
               </h1>
-              <span className="font-mono text-xs px-2.5 py-1 rounded-full bg-white/10">
-                T+ {frame ? frame.sim_time.toFixed(2) : '—'} s
+              <span
+                className="font-mono text-xs px-2.5 py-1 rounded-full bg-white/10"
+                title={frame ? `${frame.sim_time.toFixed(2)} s` : ''}
+              >
+                T+ {frame ? formatSimTime(frame.sim_time) : '—'}
               </span>
               {frame && <ModeToggle mode={frame.mode} send={send} />}
               <TransportToggle mode={transport} onChange={updateTransport} />
@@ -208,7 +247,12 @@ export default function Dashboard() {
                   bodies={frame.bodies}
                   send={send}
                 />
-                <AutopilotPanel autopilot={frame.autopilot} send={send} />
+                <AutopilotPanel
+                  autopilot={frame.autopilot}
+                  spacecraft={frame.spacecraft}
+                  initialMass={initialMassRef.current}
+                  send={send}
+                />
                 <NavPanel nav={frame.nav} truth={frame.spacecraft} send={send} />
                 <SensorsPanel
                   sensors={frame.sensors}
