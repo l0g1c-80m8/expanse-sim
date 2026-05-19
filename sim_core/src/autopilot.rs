@@ -32,7 +32,7 @@ use glam::{DQuat, DVec3};
 use serde::{Deserialize, Serialize};
 
 use crate::components::{PropulsionDrive, RigidBody, Spacecraft};
-use crate::ephemeris::EphemerisCache;
+use crate::ephemeris::{park_orbit_state, EphemerisCache};
 use crate::mission::Mission;
 
 /// Standard gravity (m/s²) used to convert "Expanse-style" g-loads into
@@ -230,8 +230,21 @@ pub fn autopilot_system(
 
     let accel = ap.accel_g.max(0.0) * G0;
 
-    let rel_pos = target.position - rb.position;
-    let rel_vel = target.velocity - rb.velocity;
+    // Effective rendezvous point: a circular parking orbit around the
+    // target body when we know its gravitational parameters, otherwise the
+    // body's centre (so synthetic test targets behave as before). This is
+    // what makes the autopilot drop the ship *into orbit* around Mars
+    // rather than aiming at Mars's geometric centre.
+    let target_params = cache
+        .bodies()
+        .into_iter()
+        .find(|b| b.id == target_id);
+    let eff_target = target_params
+        .and_then(|p| park_orbit_state(target, p))
+        .unwrap_or(target);
+
+    let rel_pos = eff_target.position - rb.position;
+    let rel_vel = eff_target.velocity - rb.velocity;
     let range = rel_pos.length();
     let rel_speed = rel_vel.length();
     // Positive closing rate ⇒ approaching. Equivalent to −d|r|/dt.
@@ -266,8 +279,12 @@ pub fn autopilot_system(
     // aligned with `rel_pos` — the classic ZEM/ZEV failure mode under
     // bounded actuation. Growing tgo slows the commanded profile until it
     // becomes feasible, which is provably stable.
-    let (_intercept_pos, mut tgo) =
-        predict_intercept(rb.position, target.position, target.velocity, accel);
+    let (_intercept_pos, mut tgo) = predict_intercept(
+        rb.position,
+        eff_target.position,
+        eff_target.velocity,
+        accel,
+    );
     tgo = tgo.max(1.0);
     // Headroom: command at most 90 % of budget so there's bandwidth for
     // unmodelled disturbances (mass loss during burn, gravity gradients

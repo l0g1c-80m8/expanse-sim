@@ -15,7 +15,7 @@ use crate::clock::SimClock;
 use crate::components::{
     CommandedWrench, PropulsionDrive, PropulsionType, RadiationModel, RigidBody, Spacecraft,
 };
-use crate::ephemeris::{naif, EphemerisCache, AU, MU_SUN};
+use crate::ephemeris::{naif, park_orbit_state, EphemerisCache, AU, MU_SUN};
 use crate::mission::Mission;
 use crate::mode::{SimMode, SimModeState};
 use crate::nav::{NavEstimate, NavFilter};
@@ -569,15 +569,22 @@ fn stage_at_source(sim: &mut ExpanseSim, spacecraft_entity: Entity) {
         .get_resource::<Mission>()
         .and_then(|m| m.source_body);
     let Some(source_id) = source else { return };
-    let state = sim
-        .world
-        .get_resource::<EphemerisCache>()
-        .and_then(|c| c.get(source_id));
-    let Some(state) = state else { return };
+    let cache = sim.world.get_resource::<EphemerisCache>();
+    let Some(cache) = cache else { return };
+    let Some(state) = cache.get(source_id) else { return };
+    let params = cache.bodies().into_iter().find(|b| b.id == source_id);
+
+    // Stage in a circular parking orbit around the source body when we have
+    // its gravitational parameters. For synthetic / massless test bodies we
+    // fall through to the body-centre behaviour the integration tests assume.
+    let staged = params
+        .and_then(|p| park_orbit_state(state, p))
+        .unwrap_or(state);
+
     if let Ok(mut entity) = sim.world.get_entity_mut(spacecraft_entity) {
         if let Some(mut rb) = entity.get_mut::<RigidBody>() {
-            rb.position = state.position;
-            rb.velocity = state.velocity;
+            rb.position = staged.position;
+            rb.velocity = staged.velocity;
             rb.attitude = DQuat::IDENTITY;
             rb.angular_velocity = DVec3::ZERO;
         }
@@ -642,6 +649,61 @@ mod tests {
         assert_eq!(frame.mode, "mission");
         assert!(frame.autopilot.engaged);
         assert!((frame.autopilot.accel_g - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stage_at_source_parks_ship_in_earth_orbit() {
+        let (mut sim, mut id) = new_sim_with_ship();
+        let params = ResetParams::default();
+        // Ensure we have a mission with Earth as source (default already, but
+        // be explicit for the assertion).
+        apply_command(
+            &mut sim,
+            &mut id,
+            ControlCommand::SetMission {
+                source: Some(naif::EARTH),
+                target: Some(naif::MARS),
+            },
+            params,
+        );
+        apply_command(&mut sim, &mut id, ControlCommand::StageAtSource, params);
+
+        let frame = snapshot(&sim, id, 0, 0.0);
+        let ship_pos = frame
+            .spacecraft
+            .as_ref()
+            .map(|s| glam::DVec3::from_array(s.position))
+            .expect("spacecraft snapshot");
+        let earth = frame
+            .bodies
+            .iter()
+            .find(|b| b.id == naif::EARTH)
+            .expect("earth in roster");
+        let earth_pos = glam::DVec3::from_array(earth.position);
+        let altitude = (ship_pos - earth_pos).length() - earth.radius;
+        // Earth radius is ~6.4 Mm; park orbit altitude is at least 100 km
+        // (and ~3 Mm at this body's mu/radius). Anywhere in [50 km, 100 Mm]
+        // means we're in orbit rather than at the body's centre.
+        assert!(
+            altitude > 5.0e4 && altitude < 1.0e8,
+            "expected park-orbit altitude in (50 km, 100 Mm), got {:.0} m",
+            altitude
+        );
+
+        // And the ship velocity must include circular-orbit speed on top
+        // of Earth's heliocentric velocity — measured as |v_ship - v_earth|.
+        let ship_vel = frame
+            .spacecraft
+            .as_ref()
+            .map(|s| glam::DVec3::from_array(s.velocity))
+            .unwrap();
+        let earth_vel = glam::DVec3::from_array(earth.velocity);
+        let rel_v = (ship_vel - earth_vel).length();
+        assert!(
+            rel_v > 1_000.0 && rel_v < 20_000.0,
+            "expected ~1–20 km/s relative orbital velocity, got {:.1} m/s",
+            rel_v
+        );
     }
 
     #[test]

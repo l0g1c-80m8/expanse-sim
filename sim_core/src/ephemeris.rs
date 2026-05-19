@@ -160,6 +160,51 @@ pub fn propagate_keplerian(k: &KeplerElements, mu_central: f64, t: f64) -> BodyS
     BodyState { position: pos, velocity: vel }
 }
 
+/// Returns a circular "parking orbit" state around `body` — useful for both
+/// staging a spacecraft at the source body and as the effective rendezvous
+/// target so the autopilot doesn't aim at the body's *centre*.
+///
+/// The orbit is prograde, co-planar with the body's heliocentric orbital
+/// plane (offset perpendicular to the body's velocity in the ecliptic XY
+/// plane), and sits at altitude = max(body.radius·0.5, 100 km) above the
+/// body's surface.
+///
+/// Returns `None` if the body has no gravitational pull (μ ≤ 0) — i.e. it's
+/// a synthetic test target without orbital mechanics — so the caller can
+/// fall back to body-centre behaviour.
+pub fn park_orbit_state(body_state: BodyState, body_params: BodyParams) -> Option<BodyState> {
+    if body_params.mu <= 0.0 || body_params.radius <= 0.0 {
+        return None;
+    }
+    let altitude = (body_params.radius * 0.5).max(1.0e5); // ≥ 100 km
+    let r = body_params.radius + altitude;
+    let v_circ = (body_params.mu / r).sqrt();
+
+    // Body-velocity direction. Fall back to +X if the body is stationary
+    // (e.g., the Sun in heliocentric coords).
+    let body_vel_mag = body_state.velocity.length();
+    let along = if body_vel_mag > 1e-9 {
+        body_state.velocity / body_vel_mag
+    } else {
+        DVec3::X
+    };
+
+    // Perpendicular offset in the ecliptic XY plane. If the cross-product
+    // degenerates (body moving parallel to Z), fall back to +Y.
+    let z = DVec3::Z;
+    let perp = along.cross(z);
+    let perp = if perp.length_squared() < 1e-12 {
+        DVec3::Y
+    } else {
+        perp.normalize()
+    };
+
+    Some(BodyState {
+        position: body_state.position + perp * r,
+        velocity: body_state.velocity + along * v_circ,
+    })
+}
+
 /// Default planet roster. Elements are J2000-epoch heliocentric ecliptic
 /// approximations from JPL fact sheets. Good enough for autonomy testing —
 /// load real SPICE kernels when you need arc-second accuracy.
