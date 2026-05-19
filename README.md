@@ -1,17 +1,19 @@
 # expanse-sim
 
 > A deterministic, 6-DOF interplanetary spacecraft simulator with a
-> ZEM/ZEV rendezvous autopilot, a synthetic sensor model, and a live
-> solar-system web dashboard — a digital twin of the solar system built for
-> navigation, localization, and autonomy R&D.
+> ZEM/ZEV rendezvous autopilot, an onboard EKF nav filter, a synthetic
+> sensor model, and a live solar-system web dashboard — a digital twin
+> of the solar system built for navigation, localization, and autonomy
+> R&D, runnable entirely in the browser via WebAssembly.
 
 The simulator never integrates planetary motion itself — it queries an
 ephemeris (NAIF SPICE when present, a deterministic Keplerian propagator
-otherwise). It supports two propulsion plants: conventional chemical / ion
-and Expanse-style brachistochrone (high-thrust, high-Isp, time-variant
-mass and inertia). External autonomy stacks (ROS 2, MPC, EKF, etc.) drive
-it through a WebSocket or a lockstep IPC bridge; the bundled web dashboard
-shows what the simulator sees in real time.
+otherwise). It supports two propulsion plants: conventional chemical /
+ion and Expanse-style brachistochrone (high-thrust, high-Isp, time-variant
+mass / inertia). External autonomy stacks (ROS 2, MPC, EKF, etc.) drive
+it through a WebSocket or a lockstep IPC bridge; the bundled web
+dashboard talks to the same wire format and can either connect to a
+running Rust server or run the whole simulation in-browser via WASM.
 
 ## Table of contents
 
@@ -22,9 +24,12 @@ shows what the simulator sees in real time.
 - [Determinism contract](#determinism-contract)
 - [Physics & dynamics](#physics--dynamics)
 - [Autopilot (ZEM/ZEV)](#autopilot-zemzev)
+- [Onboard navigation (EKF)](#onboard-navigation-ekf)
 - [Synthetic sensor model](#synthetic-sensor-model)
 - [Mission, source & target](#mission-source--target)
+- [Operating modes (Sandbox vs Mission)](#operating-modes-sandbox-vs-mission)
 - [Web dashboard](#web-dashboard)
+- [Transports: WASM in-browser vs WebSocket server](#transports-wasm-in-browser-vs-websocket-server)
 - [Feature flags](#feature-flags)
 - [Testing](#testing)
 - [VS Code integration](#vs-code-integration)
@@ -34,134 +39,146 @@ shows what the simulator sees in real time.
 
 ## Highlights
 
-- **Real RK4** for translational state with quaternion-aware rotational
-  integration. Free-rotation quaternion norm holds to machine precision
-  over 10⁵ ticks (tested).
+- **Real RK4** translational integration with quaternion-aware rotation.
+  Free-rotation quaternion norm holds to machine precision over 10⁵ ticks.
 - **ZEM/ZEV rendezvous autopilot** (Battin §13 fixed-time guidance) that
-  actually nulls both relative position *and* velocity at the target —
-  ships arrive softly instead of flying past. Saturation-aware: the
-  time-to-go is iteratively grown until the commanded acceleration fits
-  the spacecraft's thrust budget.
-- **Synthetic sensors** — range, range-rate, inertial bearings, IMU
-  (gravity-free specific force + gyro), star-tracker attitude. Gaussian
-  noise is **deterministic per `(sim_time, body_id)`** so EKF / nav
-  replays see the same samples every run.
+  nulls both relative position and velocity at the target. Saturation
+  aware: `t_go` is iteratively grown until the commanded acceleration
+  fits the budget. Ship arrives **in target orbit**, not at body centre.
+- **Onboard EKF navigation filter** — 6-state position+velocity estimator
+  consuming the noisy sensor pack with measurement updates from each
+  catalogued body. Position uncertainty visualised as a wireframe ball
+  around a "ghost ship" alongside the ground-truth ship.
+- **Synthetic sensors** — range, range-rate (with optional **light-time
+  delay**), inertial bearings, IMU (gravity-free specific force + gyro),
+  star-tracker attitude. Deterministic Gaussian noise seeded from
+  `(sim_time, body_id)` so EKF replays see identical samples.
 - **Data-driven environment** — ephemeris cache pre-loaded with Sun + 8
-  planets; swap in NAIF SPICE BSP kernels via `--features spice` for
-  arc-second-accurate states.
+  planets + Luna + Phobos + Deimos. Swap in NAIF SPICE BSP kernels via
+  `--features spice` for arc-second-accurate states.
 - **Time-warp without breaking determinism** — `SimTime.dt` is constant;
   warp only changes how many ticks the driver retires per wall-second.
-  A PID/MPC tuned at 1× behaves identically at 100 000×.
+- **Two transports** — the dashboard can run the simulator
+  **entirely in the browser (WASM)** or talk to a Rust **WebSocket
+  server**. Identical JSON wire format; one toggle in the header.
 - **Live web dashboard** — Three.js solar-system view with orbit traces,
-  predicted trajectory forecast, body labels, velocity / thrust arrows,
-  mission source–target picker, and a sensors / autopilot console.
-- **Deployable to GitHub Pages** — static export with a one-shot GitHub
-  Actions workflow.
-- **53 unit + integration tests** passing on every push.
+  predicted-trajectory forecast, fading breadcrumb trail, body labels,
+  velocity / thrust arrows, mission progress + Δv budget, EKF
+  ghost-ship, click-to-focus on any body.
+- **Solar Radiation Pressure** modelled as a small radial force when the
+  spacecraft carries a `RadiationModel` component — physically correct,
+  scales as `(AU/r)²`.
+- **73 unit + integration tests** + 4 ignored E2E (WebSocket smoke).
 
 ## Repository layout
 
 ```
 sim_core/        Rust library — ECS, RK4 dynamics, propulsion, ephemeris,
-                 autopilot, sensors, IPC bridges
-sim_server/      Rust binary  — axum HTTP/WebSocket server that drives sim_core
-                 in a tokio task with adaptive wall-clock pacing
+                 autopilot, sensors, EKF nav, wire protocol
+sim_server/      Rust binary — axum HTTP/WebSocket server, thin shim over
+                 sim_core::protocol
+sim_wasm/        WASM wrapper crate — wasm-bindgen module that runs the same
+                 sim in a browser Web Worker
 web_dashboard/   Next.js 16 + React 19 + Three.js dashboard (static export)
-.github/         CODEOWNERS, workflows (GitHub Pages deploy), issue & PR
-                 templates
+.github/         CODEOWNERS, workflows (GitHub Pages deploy with WASM build),
+                 issue & PR templates
 .vscode/         tasks.json + launch.json + settings.json for one-click
                  build / run / debug / test from the IDE
 ```
+
+`sim_core` is a single library that everyone — Rust server, WASM
+front-end, integration tests — uses. The crate root keeps a small
+ergonomic surface (`SimTime`, `SimClock`, `RigidBody`, `ExpanseSim`,
+`SimConfig`); for everything else, `use sim_core::prelude::*;` or reach
+into the module path directly (`sim_core::autopilot::Autopilot`).
 
 ## Quick start
 
 Prerequisites: **Rust ≥ 1.85** (edition 2024) and **Node.js ≥ 20**.
 
 ```bash
-# Tests — 53 unit + integration, no external deps needed
+# Tests — 73 unit + integration, no external deps needed
 cargo test --workspace --no-default-features --features sim_core/thermodynamics
 
-# Run the simulation server (release recommended for high warp)
+# Either run the dashboard standalone (uses in-browser WASM sim) …
+cd web_dashboard
+# one-time: build the WASM module the dashboard loads
+wasm-pack build ../sim_wasm --release --target web --out-dir ../web_dashboard/public/wasm
+npm install
+npm run dev
+# open http://localhost:3000 — the simulator runs in a Web Worker
+
+# … or run the WebSocket server backend and flip the dashboard's
+# transport toggle to "Server" in the header.
 cargo run --release -p sim_server -- \
     --bind 127.0.0.1:8080 \
     --dt 0.05 \
     --warp 60 \
     --telemetry-stride 20
-
-# In another terminal — install + start the dashboard
-cd web_dashboard
-npm install
-npm run dev
-# open http://localhost:3000
 ```
 
-In VS Code: `Tasks: Run Task` → **`run: full stack (server + dashboard)`**.
-
-The dashboard's WebSocket URL defaults to `ws://127.0.0.1:8080/ws` and can
-be overridden through the settings overlay (persisted to `localStorage`).
+In VS Code: `Tasks: Run Task` → **`run: full stack (server + dashboard)`**
+for the WebSocket path, or **`build: sim_wasm`** + **`run: dashboard (dev)`**
+for the WASM-only path.
 
 ## Architecture
 
 ```
-┌────────────────── sim_server (tokio) ──────────────────┐
-│                                                        │
-│   ┌──── ExpanseSim (bevy_ecs World) ────────────────┐  │
-│   │  ephemeris_refresh                              │  │
-│   │      → autopilot (ZEM/ZEV)                       │  │
-│   │      → propulsion                                │  │
-│   │      → dynamics (RK4)                            │  │
-│   │      → sensors                                   │  │
-│   │      → thermal (optional)                        │  │
-│   │      → lockstep (autonomy bridge)                │  │
-│   └──────────────────────────────────────────────────┘  │
-│       ▲                                  │              │
-│  mpsc │ ControlCommand                   │ Telemetry    │
-│       │                                  ▼              │
-│   /ws WebSocket  ────► tokio::broadcast channel         │
-└────────┬─────────────────────────────────────┬──────────┘
-         │                                     │
-   Web dashboard                       Autonomy stack
-   (Next.js / Three.js)                (ROS 2 / MPC / EKF)
-                                       via `zmq_bridge` feature
+            ┌──────── ExpanseSim (bevy_ecs World + Schedule) ────────┐
+            │  ephemeris_refresh → autopilot → propulsion →          │
+            │     dynamics (RK4) → sensors → nav (EKF) →             │
+            │     ↘ thermal (optional)  → lockstep                   │
+            └────────────────────────────────────────────────────────┘
+                              ▲             │
+              ControlCommand  │             │ TelemetryFrame
+                              │             ▼
+                ┌─────────────┴─────────────────────────────┐
+                │  sim_core::protocol  (single source of    │
+                │  truth: types + snapshot + apply_command) │
+                └─────────────┬─────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────────┐
+              ▼               ▼                   ▼
+      sim_server          sim_wasm           autonomy stack
+      (axum + tokio)      (wasm-bindgen,     (ROS 2 + planned
+                          Web Worker)         ZMQ bridge in
+                                              sim_core::ipc)
+              ▼               ▼
+       WebSocket client   in-browser
+              └──────┬────────┘
+                     ▼
+            web_dashboard (Next.js)
 ```
 
-Threading model — one dedicated `spawn_blocking` task drives the
-simulation; tokio handles HTTP/WS; a `tokio::sync::broadcast` channel
-fan-outs telemetry to N web clients; commands flow back through an MPSC.
-The driver yields adaptively (`thread::yield_now()` when there's budget
-to retire, `thread::sleep` otherwise) so warp throughput isn't capped by
-a fixed loop interval.
+`sim_core::protocol` is the only module that knows about the wire
+format. Submodules:
 
-## Determinism contract
+- `types.rs`    — `TelemetryFrame`, `ControlCommand`, snapshot structs
+- `snapshot.rs` — read the ECS world into a `TelemetryFrame`
+- `command.rs`  — `apply_command` + `stage_at_source`
+- `setup.rs`    — `build_default_sim` + `spawn_default_spacecraft`
 
-- **`SimTime.dt` is invariant.** Warp only changes the tick-retire rate.
-- **Schedule order is explicit.** Every system declares `.after()` /
-  `.before()` — implicit ordering would break replay.
-- **Sensor noise is seeded** off `(sim_time, body_id)`, never wall clock.
-- **No floating-point reductions** depend on threading; tests pin numeric
-  bounds tightly enough to catch a drift regression.
+### Determinism
 
-ROS 2 controllers tuned at 1× warp behave identically at 100 000× — which
-is the only reason time-warping is useful for autonomy work.
+- `SimTime.dt` is constant. Warp only changes the tick-retire rate.
+- The schedule is a deterministic Bevy `Schedule` with explicit ordering.
+- Sensor noise is seeded off `(sim_time, body_id)`, never wall clock.
+- The WASM build runs the same schedule as the native server bit-for-bit.
 
 ## Physics & dynamics
 
-- **Translation** — classical fourth-order Runge-Kutta over a constant
-  `dt`. The propulsion force is held steady across the substeps; with
-  sub-millisecond ticks this is a tight approximation.
-- **Rotation** — Euler's rigid-body equation `I ω̇ = τ − ω × (I ω)` with a
-  midpoint step on ω and a quaternion exponential map on the attitude.
-- **Gravity** — `EphemerisCache::gravity_at(position, t)` sums Newtonian
-  gravity from every body in the cache. RK4 substeps see consistent body
-  positions because the ephemeris is refreshed once per tick.
-- **Body-frame thrust** is rotated through the rigid body's current
-  attitude before integration. Body +x is the conventional drive axis.
+- **Translation** — classical 4th-order Runge-Kutta over a constant `dt`.
+- **Rotation** — Euler's rigid-body equation with quaternion exponential
+  map for attitude.
+- **Gravity** — N-body sum from every catalogued body. Interior gravity
+  uses the uniform-density shell theorem (linear in r below the surface)
+  so the integrator never hits the 1/r² singularity.
+- **Solar Radiation Pressure** — radial outward force scaling as
+  `(AU/r)²`, applied when the spacecraft has a `RadiationModel`.
+- **Body-frame thrust** is rotated through the rigid body's attitude
+  before integration.
 
 ## Autopilot (ZEM/ZEV)
-
-The headline guidance feature. Given a mission target and a commanded
-acceleration budget (in `g`), the autopilot drives the ship to arrival
-with near-zero relative velocity.
 
 ```
 a_cmd =  6 · ZEM / t_go²  −  2 · ZEV / t_go
@@ -169,107 +186,142 @@ ZEM   =  (r_target − r_ship) + (v_target − v_ship) · t_go
 ZEV   =  v_target − v_ship
 ```
 
-This is the closed-form optimal solution to the quadratic-cost fixed-time
-rendezvous problem (Battin, *Introduction to the Mathematics and Methods
-of Astrodynamics*, §13) — the same family of laws used in Apollo descent
-guidance and AR&D phasing burns.
+The closed-form optimal fixed-time rendezvous law (Battin §13). The
+naive form demands unbounded acceleration when `v_rel` is poorly aligned
+with `r_rel`, so the controller iteratively grows `t_go` until the
+commanded acceleration fits the spacecraft's `accel_g` budget.
 
-The naive form demands unbounded acceleration whenever `v_rel` is poorly
-aligned with `r_rel`, so the autopilot **iteratively expands `t_go`**
-until the commanded acceleration fits the budget. Tested against:
-
-- a stationary target → soft arrival within 500 km and 5 m/s,
-- a laterally-drifting target → soft arrival within 1000 km and 50 m/s,
-- a real Earth → Mars transit @ 5 g (release build E2E) → 32 600 km, −29 m/s.
+**Target = parking orbit, not body centre.** When the target body has
+non-zero μ, the autopilot's effective target is a circular parking
+orbit around it. The ship arrives in orbit instead of being driven into
+the body's centre.
 
 Phases reported on the wire: `Idle / Boost / Brake / Arrived / Hold`.
 
+## Onboard navigation (EKF)
+
+`sim_core::nav` runs a 6-state position+velocity EKF that consumes the
+synthetic sensor pack and produces an estimated state plus 6×6
+covariance. Process model: Sun-only gravity (cruise-style). Observations:
+per-body range with sequential updates. Initialises from ground truth on
+engage with operator-set uncertainty; thereafter operates purely on
+sensor data.
+
+The dashboard renders the estimate as a violet "ghost ship" with a
+wireframe 1-σ ball around it, plus a violet error line drawn back to
+the ground-truth ship — instant visual diagnostic for nav filter
+performance.
+
 ## Synthetic sensor model
 
-Per-tick `SensorPack` includes:
+Per-tick `SensorPack` contains:
 
-- **Per-body range** + range-rate + inertial-frame bearing unit vector
-- **IMU** — body-frame specific force (gravity-free, as a strapdown reports)
-  and gyro angular rate
-- **Star tracker** — attitude quaternion with isotropic pointing noise
+- **Per-body range** + range-rate + inertial-frame bearing unit vector,
+  with optional **one-way light-time delay** (`r/c` correction).
+- **IMU** — body-frame specific force (gravity-free, as strapdown reports)
+  and gyro rate.
+- **Star tracker** — attitude quaternion with isotropic pointing noise.
 
-All sigmas are configurable at runtime (`set_sensor_config` WebSocket
-command). The dashboard exposes four presets: **Off**, **DSN-class**
-(σᵣ ≈ 1 ppm), **Spacecraft** (σᵣ ≈ 10 ppm + 10 m floor), and **Stressed**
-(σᵣ ≈ 0.1 %). Noise is generated with a deterministic xorshift PRNG seeded
-from `(sim_time, body_id)` — re-running the same sim produces bit-for-bit
-identical sensor streams.
-
-This is what makes the simulator useful as a **digital twin for nav /
-localization R&D**: an external EKF or particle filter can be fed the
-noisy measurements and benchmarked against the ground truth that the
-server is also broadcasting.
+Configurable noise sigmas. Four dashboard presets: **Off / DSN-class /
+Spacecraft / Stressed**. Noise is deterministic per `(sim_time, body_id)`.
 
 ## Mission, source & target
 
 A `Mission { source_body, target_body }` resource lives in the ECS world
-and is exposed in every telemetry frame. The autonomy stack reads it to
-decide where to plan a transit; the dashboard exposes a picker (with
-order-of-magnitude Hohmann and 1 g brachistochrone transit estimates) and
-a **"Stage at source"** button that respawns the spacecraft on the source
-body's current heliocentric orbit. The default mission is **Earth → Mars**.
+and is broadcast in every telemetry frame. The dashboard exposes
+source / target dropdowns, a transit-warp picker, and a one-shot
+**Plan & Run** button that:
+
+1. Sets the mission endpoints
+2. Switches to Mission mode
+3. Stages the ship in a circular orbit around the source body
+4. Engages the autopilot
+5. Bumps warp so the transit finishes in seconds of wall time
+
+## Operating modes (Sandbox vs Mission)
+
+- **Sandbox** — the ship coasts under gravity (and SRP); autopilot is
+  silent. Useful for orbital-mechanics study and nav-filter benchmarking
+  without a thrust confound.
+- **Mission** — autopilot has authority; operator thrust commands are
+  ignored so the planned trajectory plays out cleanly.
+
+Header toggle (chip pair) flips between them. Switching back to Sandbox
+cuts any in-flight burn.
 
 ## Web dashboard
 
-Live components (toggleable in the View panel):
+- **Three.js solar-system map** with bodies sized for legibility,
+  ecliptic grid, configurable star background. Moons (Luna, Phobos,
+  Deimos) hide their labels at solar-system zoom to avoid colliding
+  with their planet's label; click any body sphere to focus the camera
+  on it.
+- **Spacecraft hull** oriented along velocity, cyan selection ring,
+  thrust plume when burning, green velocity arrow, orange thrust arrow.
+- **Trajectory visuals** — predicted forecast (cyan dashed), past
+  breadcrumb trail (warm orange), mission transit line (pink dashed),
+  body orbit rings, all drawn with drei's `<Line>` so width actually
+  shows up.
+- **Ghost ship + 1-σ ball** when the nav filter is engaged.
+- **Side panels** — Telemetry, Mission (with source / target picker,
+  Plan & Run, transit estimates), Autopilot (engage, accel slider,
+  phase badge, range / closing / ETA, progress bar, Δv budget),
+  Nav (engage filter, uncertainty, estimator error vs ground truth),
+  Sensors (live radar / IMU / star tracker, noise presets, light-time
+  toggle), View (orbit / label / grid / star toggles, trajectory
+  horizon, camera focus).
+- **Keyboard shortcuts** — `Space` pause, `[` / `]` warp down / up,
+  `x` cut engine, `f` focus on ship, `r` reset.
 
-- Solar-system map with bodies sized for legibility and labeled with live
-  distances; per-body orbit traces in body-tinted colour.
-- Spacecraft hull oriented along velocity, with cyan selection ring,
-  thrust plume when burning, green velocity arrow, and orange thrust arrow.
-- **Predicted trajectory** — client-side leapfrog forecast under Sun-only
-  gravity, configurable horizon (1 day to 5 years).
-- Source / target highlighted with coloured halos and connected by a
-  dashed transit line.
-- Configurable **camera focus** — free orbit / Sun / any planet / ship.
+## Transports: WASM in-browser vs WebSocket server
 
-Side panels:
+The dashboard ships **both** transports and picks via a header toggle
+(persisted in `localStorage`).
 
-- **Telemetry** — sim-time, requested vs effective warp (flagged amber
-  when the throughput ceiling is hit), connection status, spacecraft
-  state.
-- **Mission** — source / target dropdowns, Stage button, transit estimates.
-- **Autopilot** — Engage toggle, accel slider (0.1 – 5 g), phase badge,
-  range / closing rate / ETA.
-- **Sensors** — radar readout for any body, IMU magnitudes, star-tracker
-  quaternion, noise-preset picker.
-- **View** — orbit / label / grid / stars / trajectory toggles, horizon
-  picker, camera focus.
+| Mode       | Use it for                                                                            |
+|------------|---------------------------------------------------------------------------------------|
+| **WASM**   | Hosted demo / no backend needed / works offline / scales to N users for free          |
+| **Server** | High-fidelity local dev with full Rust performance, or a hosted backend with `wss://` |
 
-Keyboard shortcuts: `Space` pause / resume, `[` / `]` warp down / up,
-`x` cut engine, `f` focus on ship, `r` reset.
+The wire format is identical — same `TelemetryFrame`, same
+`ControlCommand`, same `sim_core::protocol::{snapshot, apply_command}`.
+The WASM module is built via:
+
+```bash
+wasm-pack build sim_wasm --release --target web \
+    --out-dir ../web_dashboard/public/wasm
+```
+
+and ends up as a ~720 KB optimised `.wasm` plus a 12 KB JS shim that
+Next.js bundles into the static export.
 
 ## Feature flags
 
 Compose with `cargo build -p sim_core --features "<a>,<b>"`:
 
-| flag                | what it does                                              |
-|---------------------|-----------------------------------------------------------|
+| flag                | what it does                                               |
+|---------------------|------------------------------------------------------------|
 | `thermodynamics`    | enables `Thermodynamics` component + Stefan-Boltzmann sink |
-| `synthetic_sensors` | reserved for Iceoryx2 zero-copy high-bandwidth sensor publishing |
+| `synthetic_sensors` | reserved for Iceoryx2 zero-copy sensor publishing          |
 | `spice`             | swaps the Keplerian propagator for NAIF SPICE              |
 | `zmq_bridge`        | lockstep ZeroMQ REP socket for ROS 2 autonomy nodes        |
 | `iceoryx`           | shared-memory transport for high-bandwidth sensor frames   |
 | `full`              | all of the above                                           |
 
 Native-dependency features (`spice`, `zmq_bridge`, `iceoryx`) are opt-in
-on purpose — the core library builds and tests cleanly on a bare machine.
+on purpose — the core library builds and tests cleanly on a bare machine
+and compiles to WebAssembly without modification.
 
 ## Testing
 
 ```bash
-# 53 unit + integration tests, no external deps
+# 73 unit + integration tests, no external deps
 cargo test --workspace --no-default-features --features sim_core/thermodynamics
 
 # End-to-end WebSocket smoke tests (need a built binary; ignored by default)
 cargo build --release -p sim_server
 CARGO_BIN_EXE_sim_server=target/release/sim_server \
-    cargo test -p sim_server -- --ignored --nocapture
+    cargo test -p sim_server -- --ignored --test-threads=1 --nocapture
 
 # Dashboard
 cd web_dashboard
@@ -277,70 +329,47 @@ npx tsc --noEmit
 npm run build
 ```
 
-Coverage spans:
-
-- clock determinism under warp,
-- RK4 conservation (uniform motion, constant force, circular orbit energy),
-- quaternion-norm preservation under free rotation,
-- Tsiolkovsky Δv and brachistochrone inertia rescaling,
-- Keplerian planet periods and orbital bands,
-- ephemeris position drift over 30 simulated days,
-- autopilot arrival at static and moving targets,
-- noise-free vs noisy sensor reproducibility and seeded determinism,
-- end-to-end WebSocket telemetry + commands, autopilot Earth → Mars.
-
-Run the **`everything: build, test, lint`** VS Code task to gate a PR.
+Coverage spans: clock determinism under warp, RK4 conservation, autopilot
+arrival at static and moving targets, parking-orbit staging, light-time
+delay correction, EKF init + measurement update, body-frame transforms,
+SRP scaling laws, ephemeris periods + lunar return-to-start, and
+end-to-end WebSocket telemetry + commands.
 
 ## VS Code integration
 
-`.vscode/tasks.json` exposes 32+ tasks grouped by **build / run / stop /
-clean / test / lint / smoke / meta**. Highlights:
-
-- **`run: full stack (server + dashboard)`** — both processes in parallel
-- **`test: E2E websocket smoke test`** / **`test: E2E thrust controller`**
-  / **`test: E2E autopilot`**
-- **`dashboard: pages-style build`** — mirrors the GitHub Pages CI build
-- **`everything: build, test, lint`** — pre-PR gate
-- **`smoke: GET /health + /snapshot`** — curl-based liveness check
-
-`.vscode/launch.json` adds LLDB launch configs for the server binary,
-unit tests, integration tests (with a per-test name prompt for focused
-debugging), and a Chrome / Firefox configuration for the dashboard.
+`.vscode/tasks.json` exposes 33+ tasks grouped by **build / run / stop /
+clean / test / lint / smoke / meta**, including
+**`build: sim_wasm (release, into dashboard public/)`** for the
+WASM artifact.
 
 ## GitHub Pages deployment
 
-The dashboard is built as a static export and published on every push to
-`develop` that touches `web_dashboard/**`. The workflow lives at
-[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
+`.github/workflows/deploy-pages.yml` builds the WASM module + the
+Next.js static export on every push to `develop`/`main` and publishes
+to GitHub Pages. One-time setup: **Settings → Pages → Source = "GitHub
+Actions"**.
 
-One-time setup: **Repo Settings → Pages → Source = "GitHub Actions"**.
-
-Live site: <https://l0g1c-80m8.github.io/expanse-sim/>.
-
-To override the default WebSocket endpoint baked into the hosted bundle,
-set a repository variable `NEXT_PUBLIC_DEFAULT_WS_URL` to your `wss://`
-URL. Users can still change it live through the dashboard's settings
-panel.
+Live: <https://l0g1c-80m8.github.io/expanse-sim/>
 
 ## Debugging tips
 
-- **High-warp run looks "stuck"** — check the `warp eff` row in the
-  Telemetry panel. If it's flagged amber, the requested warp exceeds the
-  effective throughput ceiling. Lower the warp or increase `--dt`.
-- **Spacecraft teleports / misbehaves at high warp** — debug builds can
-  sustain only a few thousand `×` effective warp. Use the release server
-  (`cargo run --release -p sim_server`) for the demo.
-- **Propulsion goes silent** — confirm `propellant_mass > 0`. The drive
-  emits no force after the tank empties even if `thrust_command` is set.
-- **Autopilot oscillates** — usually means the target body resolves to a
-  fast-orbiting synthetic body (period < transit time). Use the static
-  position helper `EphemerisCache::set_state` in tests.
-- **Dashboard shows "Disconnected"** — the WS URL in the settings panel
-  doesn't match what the server is bound to. Default is
-  `ws://127.0.0.1:8080/ws`.
-- **Tests fail on energy drift after changing `dt`** — RK4 is stable for
-  the default `dt = 0.01` at solar distances; coarsening it may need
-  adjusted tolerances.
+- **Plan & Run barely moves the ship** — bump the transit-warp picker in
+  the mission panel (default 10k×). The server respects it via the
+  `warp` field on `start_mission`.
+- **High-warp run flagged amber** — the `warp eff` row in the telemetry
+  panel is < 90% of the requested warp. The throughput cap is biting;
+  raise `--dt` or lower the requested warp.
+- **Spacecraft staged "inside" Earth visually** — that's a scale
+  artefact, not a bug. Planet visual radii are non-physical for
+  legibility; the ship is in a real parking orbit (1000+ km altitude).
+  Click Earth's sphere to focus and zoom in.
+- **Autopilot oscillating** — usually means the target is a fast-orbiting
+  synthetic body. Real bodies (μ > 0) drop into a parking-orbit target
+  automatically.
+- **WASM mode shows "Loading…" forever** — check the browser console.
+  Most likely the WASM artifact isn't in `web_dashboard/public/wasm/`
+  (run `wasm-pack build sim_wasm --release --target web --out-dir
+  ../web_dashboard/public/wasm`).
 
 ## License
 

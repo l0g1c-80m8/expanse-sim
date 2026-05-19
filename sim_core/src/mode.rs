@@ -19,16 +19,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SimMode {
+    #[default]
     Sandbox,
     Mission,
 }
 
-impl Default for SimMode {
-    fn default() -> Self {
-        SimMode::Sandbox
-    }
-}
 
 #[derive(Resource, Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct SimModeState {

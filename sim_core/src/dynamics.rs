@@ -100,11 +100,10 @@ fn acceleration(
         a += gravity_at(position, t, cache, cfg.fallback_mu);
     }
     let mut force_sum = cmd.force + prop_force_inertial;
-    if cfg.apply_srp {
-        if let Some(model) = radiation {
+    if cfg.apply_srp
+        && let Some(model) = radiation {
             force_sum += srp_force(position, model);
         }
-    }
     a += force_sum / rb.mass.max(1e-12);
     a
 }

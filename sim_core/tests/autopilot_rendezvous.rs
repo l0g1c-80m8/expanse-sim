@@ -6,11 +6,8 @@
 //! the orbital mechanics — those are covered elsewhere.
 
 use glam::{DMat3, DQuat, DVec3};
-use sim_core::ephemeris::{BodyParams, BodyState, EphemerisCache};
-use sim_core::{
-    Autopilot, AutopilotPhase, CommandedWrench, ExpanseSim, Mission, PropulsionDrive,
-    PropulsionType, RigidBody, SimConfig, SimMode, SimModeState, Spacecraft,
-};
+use sim_core::ephemeris::{BodyParams, BodyState};
+use sim_core::prelude::*;
 
 /// All autopilot tests run under Mission mode — Sandbox would silence the
 /// guidance loop by design.

@@ -76,7 +76,7 @@ pub fn propulsion_system(
         let attempted = mass_flow_rate(mag, drive.isp) * dt;
         if attempted > actual_burned && attempted > 0.0 {
             let scale = actual_burned / attempted;
-            drive.thrust_command = drive.thrust_command * scale;
+            drive.thrust_command *= scale;
         }
 
         if drive.propellant_mass <= 0.0 {

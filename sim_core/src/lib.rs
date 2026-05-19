@@ -22,6 +22,14 @@
 //! server binary, an embed user, or a test) decide how many ticks to retire
 //! per wall-second. `SimClock` provides the wall→sim conversion when needed.
 
+// ── module roster ─────────────────────────────────────────────────────────
+// Modules are grouped roughly by concern:
+//   environment   ephemeris, mission, mode
+//   physics       components, dynamics, propulsion, clock, sensors
+//   guidance      autopilot, nav, thrust_controller
+//   integration   ipc (autonomy bridges), protocol (wire format)
+//   options       thermal (feature-gated)
+
 pub mod autopilot;
 pub mod clock;
 pub mod components;
@@ -38,34 +46,28 @@ pub mod sensors;
 pub mod thermal;
 pub mod thrust_controller;
 
-pub use autopilot::{
-    autopilot_system, Autopilot, AutopilotCommand, AutopilotPhase, ArrivalTolerance,
-};
+pub mod prelude;
+
+// ── core types kept at crate root for ergonomics ──────────────────────────
+//
+// Everything else lives under its module (e.g. `sim_core::autopilot::Autopilot`).
+// Use `sim_core::prelude::*` if you want the kitchen-sink import.
+
 pub use clock::{SimClock, SimTime};
-pub use components::{
-    CommandedWrench, PropulsionDrive, PropulsionType, RadiationModel, RigidBody, Spacecraft,
-};
-pub use dynamics::{dynamics_system, srp_force, DynamicsConfig, SRP_AT_1AU_N_M2};
-pub use ephemeris::{ephemeris_refresh_system, BodyParams, BodyState, EphemerisCache};
-pub use ipc::{AutonomyBridge, lockstep_sync_system, CommandPacket, TickTelemetry};
-pub use mission::Mission;
-pub use mode::{SimMode, SimModeState};
-pub use nav::{nav_filter_system, NavEstimate, NavFilter};
-pub use propulsion::propulsion_system;
-pub use protocol::{
-    apply_command, build_default_sim, snapshot, spawn_default_spacecraft, AutopilotSnapshot,
-    BodySnapshot, ControlCommand, MissionSnapshot, ResetParams, SpacecraftSnapshot,
-    TelemetryFrame, ThrustControllerSnapshot,
-};
-pub use sensors::{sensor_system, LatestSensorPack, SensorConfig, SensorPack};
-pub use thrust_controller::{thrust_controller_system, ThrustController, ThrustMode};
+pub use components::RigidBody;
 
-#[cfg(feature = "thermodynamics")]
-pub use components::Thermodynamics;
-#[cfg(feature = "thermodynamics")]
-pub use thermal::thermodynamics_system;
-
+use autopilot::{autopilot_system, Autopilot, AutopilotCommand};
 use bevy_ecs::prelude::*;
+use dynamics::{dynamics_system, DynamicsConfig};
+use ephemeris::{ephemeris_refresh_system, EphemerisCache};
+use ipc::{lockstep_sync_system, AutonomyBridge};
+use mission::Mission;
+use mode::SimModeState;
+use nav::{nav_filter_system, NavEstimate, NavFilter};
+use propulsion::propulsion_system;
+use sensors::{sensor_system, LatestSensorPack, SensorConfig};
+#[cfg(feature = "thermodynamics")]
+use thermal::thermodynamics_system;
 
 /// The central physics plant. Holds the ECS world and the deterministic
 /// schedule of systems. One tick advances `SimTime.time` by exactly

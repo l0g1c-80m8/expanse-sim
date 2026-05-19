@@ -23,12 +23,11 @@
 //! sim.apply_command_json('{"type":"set_warp","warp":1000}');
 //! ```
 
-use bevy_ecs::prelude::Entity;
+use sim_core::prelude::Entity;
 use sim_core::protocol::{
     apply_command, build_default_sim, snapshot, spawn_default_spacecraft, ControlCommand,
-    ResetParams,
 };
-use sim_core::ExpanseSim;
+use sim_core::{ExpanseSim, SimConfig};
 use wasm_bindgen::prelude::*;
 
 /// Installable once per worker so Rust panics surface in the JS console
@@ -46,7 +45,7 @@ pub fn _wasm_start() {
 pub struct SimWasm {
     sim: ExpanseSim,
     spacecraft: Entity,
-    reset_params: ResetParams,
+    sim_cfg: SimConfig,
 }
 
 #[wasm_bindgen]
@@ -54,14 +53,16 @@ impl SimWasm {
     /// Construct a new simulator with the default Earth → Mars mission.
     #[wasm_bindgen(constructor)]
     pub fn new(dt: f64, initial_warp: f64, apply_gravity: bool) -> SimWasm {
-        let reset_params = ResetParams {
+        let sim_cfg = SimConfig {
             dt,
-            initial_warp,
+            warp: initial_warp,
             apply_gravity,
+            load_default_bodies: true,
+            ..Default::default()
         };
-        let mut sim = build_default_sim(reset_params);
+        let mut sim = build_default_sim(sim_cfg);
         let spacecraft = spawn_default_spacecraft(&mut sim);
-        SimWasm { sim, spacecraft, reset_params }
+        SimWasm { sim, spacecraft, sim_cfg }
     }
 
     /// Convenience constructor matching the dashboard's default knobs.
@@ -99,7 +100,7 @@ impl SimWasm {
     pub fn apply_command_json(&mut self, cmd_json: &str) -> Result<(), JsValue> {
         let cmd: ControlCommand = serde_json::from_str(cmd_json)
             .map_err(|e| JsValue::from_str(&format!("invalid command JSON: {e}")))?;
-        apply_command(&mut self.sim, &mut self.spacecraft, cmd, self.reset_params);
+        apply_command(&mut self.sim, &mut self.spacecraft, cmd, self.sim_cfg);
         Ok(())
     }
 

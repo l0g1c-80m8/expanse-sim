@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 sim_core = { path = "../sim_core" }
-bevy_ecs = "0.18.1"
 axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1.47", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }

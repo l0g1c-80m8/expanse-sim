@@ -4,10 +4,7 @@ use approx::assert_relative_eq;
 use bevy_ecs::prelude::*;
 use glam::{DMat3, DQuat, DVec3};
 use sim_core::ephemeris::{naif, AU, MU_SUN};
-use sim_core::{
-    CommandedWrench, ExpanseSim, PropulsionDrive, PropulsionType, RigidBody, SimConfig,
-    Spacecraft,
-};
+use sim_core::prelude::*;
 
 fn spawn_default_spacecraft(sim: &mut ExpanseSim) -> Entity {
     let r = AU;
@@ -162,7 +159,7 @@ fn body_frame_thrust_follows_attitude() {
 #[test]
 fn ephemeris_planet_orbits_around_sun() {
     let sim = ExpanseSim::new();
-    let cache = sim.world.resource::<sim_core::EphemerisCache>().clone();
+    let cache = sim.world.resource::<sim_core::prelude::EphemerisCache>().clone();
     let earth = cache.get(naif::EARTH).unwrap();
     assert!(
         (earth.position.length() - AU).abs() / AU < 0.1,
@@ -178,10 +175,10 @@ fn idle_sim_advances_planet_states_over_time() {
         apply_gravity: false,
         ..Default::default()
     });
-    let cache = sim.world.resource::<sim_core::EphemerisCache>().clone();
+    let cache = sim.world.resource::<sim_core::prelude::EphemerisCache>().clone();
     let earth_t0 = cache.get(naif::EARTH).unwrap();
     sim.tick_n(30); // 30 days
-    let earth_t1 = sim.world.resource::<sim_core::EphemerisCache>().get(naif::EARTH).unwrap();
+    let earth_t1 = sim.world.resource::<sim_core::prelude::EphemerisCache>().get(naif::EARTH).unwrap();
     let moved = (earth_t1.position - earth_t0.position).length();
     // Earth covers a chunk of an arc in 30 days — way more than 1e8 m.
     assert!(moved > 1.0e10, "earth should move > 10⁹ m over 30 days, got {}", moved);

@@ -28,11 +28,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Push the latest snapshot immediately so the dashboard renders before
     // the first broadcast frame arrives.
     let initial = state.latest.lock().clone();
-    if let Some(initial) = initial {
-        if let Ok(text) = serde_json::to_string(&initial) {
+    if let Some(initial) = initial
+        && let Ok(text) = serde_json::to_string(&initial) {
             let _ = sender.send(Message::Text(text)).await;
         }
-    }
 
     let send_task = tokio::spawn(async move {
         while let Ok(frame) = rx.recv().await {

@@ -1,28 +1,9 @@
 'use client';
 
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Stars, Grid } from '@react-three/drei';
-import { useEffect, useMemo, useRef, useState } from 'react';
-
-function formatSimTime(s: number): string {
-  if (!Number.isFinite(s)) return '—';
-  if (s < 60) return `${s.toFixed(1)} s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
-  if (s < 86_400) {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    return `${h}h ${m}m`;
-  }
-  if (s < 365 * 86_400) {
-    const d = Math.floor(s / 86_400);
-    const h = Math.floor((s % 86_400) / 3600);
-    return `${d}d ${h}h`;
-  }
-  const y = s / (365.25 * 86_400);
-  return `${y.toFixed(2)} yr`;
-}
+import { useRef, useState } from 'react';
 import { Crosshair, Settings } from 'lucide-react';
-import * as THREE from 'three';
 
 import { SolarSystem } from '@/components/SolarSystem';
 import { TelemetryPanel } from '@/components/TelemetryPanel';
@@ -33,11 +14,17 @@ import { AutopilotPanel } from '@/components/AutopilotPanel';
 import { SensorsPanel } from '@/components/SensorsPanel';
 import { NavPanel } from '@/components/NavPanel';
 import { ModeToggle } from '@/components/ModeToggle';
+import { TransportToggle } from '@/components/TransportToggle';
+import {
+  FollowCamera,
+  type FocusTarget,
+} from '@/components/FollowCamera';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useBreadcrumbs } from '@/hooks/useBreadcrumbs';
 import { useSimTransport, type TransportMode } from '@/hooks/useSimTransport';
 import { useViewSettings } from '@/lib/viewSettings';
-import { metersToSceneUnits, type BodySnapshot } from '@/lib/telemetry';
+import { metersToSceneUnits } from '@/lib/telemetry';
+import { formatSimTime } from '@/lib/format';
 
 // Default WS endpoint. Hosted deployments (e.g. GitHub Pages) can bake in a
 // different default at build time via NEXT_PUBLIC_DEFAULT_WS_URL; users can
@@ -51,7 +38,6 @@ const DEFAULT_TRANSPORT: TransportMode = 'wasm';
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 const WARP_LADDER = [0, 1, 10, 100, 1_000, 10_000, 100_000];
 
-type FocusTarget = number | 'ship' | 'sun' | null;
 
 export default function Dashboard() {
   const [wsUrl, setWsUrl] = useState<string>(() => {
@@ -296,60 +282,23 @@ export default function Dashboard() {
   );
 }
 
-function TransportToggle({
-  mode,
-  onChange,
-}: {
-  mode: TransportMode;
-  onChange: (m: TransportMode) => void;
-}) {
-  const baseChip =
-    'px-2 py-1 rounded-full text-[10px] font-mono uppercase tracking-wider border transition-colors';
-  return (
-    <div
-      className="inline-flex items-center gap-1 px-1 py-0.5 rounded-full bg-black/30 border border-white/15"
-      title="Where the simulator runs: in your browser (WASM) or on a remote server (WS)."
-    >
-      <button
-        className={`${baseChip} ${
-          mode === 'wasm'
-            ? 'bg-violet-500/30 text-violet-100 border-violet-500/50'
-            : 'border-transparent text-slate-400 hover:text-slate-200'
-        }`}
-        onClick={() => onChange('wasm')}
-      >
-        WASM
-      </button>
-      <button
-        className={`${baseChip} ${
-          mode === 'ws'
-            ? 'bg-blue-500/30 text-blue-100 border-blue-500/50'
-            : 'border-transparent text-slate-400 hover:text-slate-200'
-        }`}
-        onClick={() => onChange('ws')}
-      >
-        Server
-      </button>
-    </div>
-  );
-}
-
+/**
+ * Step warp up or down the preset ladder. Local helper used by the
+ * keyboard-shortcut handlers; kept in this file because the ladder values
+ * are page-local config.
+ */
 function stepWarp(
   current: number,
   direction: 1 | -1,
   send: (cmd: { type: 'set_warp'; warp: number }) => void,
 ) {
-  // Snap to the next/previous preset on the ladder, plus a sensible
-  // floor/ceiling.
   const idx = WARP_LADDER.findIndex((w) => w >= current);
   const cur = idx === -1 ? WARP_LADDER.length - 1 : idx;
-  const next = Math.min(
-    Math.max(cur + direction, 0),
-    WARP_LADDER.length - 1,
-  );
+  const next = Math.min(Math.max(cur + direction, 0), WARP_LADDER.length - 1);
   send({ type: 'set_warp', warp: WARP_LADDER[next] });
 }
 
+/** Wireframe sphere shown in the 3D scene before the first telemetry frame. */
 function Placeholder() {
   return (
     <mesh>
@@ -357,64 +306,4 @@ function Placeholder() {
       <meshBasicMaterial color="#374151" wireframe />
     </mesh>
   );
-}
-
-/**
- * Pin the orbit-controls target onto a chosen body or the spacecraft every
- * frame. The camera keeps its current offset from the target so the user
- * stays in control of zoom and angle.
- */
-function FollowCamera({
-  target,
-  bodies,
-  spacecraftPosition,
-}: {
-  target: FocusTarget;
-  bodies: BodySnapshot[];
-  spacecraftPosition: [number, number, number] | null;
-}) {
-  const { camera, controls } = useThree() as unknown as {
-    camera: THREE.PerspectiveCamera;
-    controls: { target: THREE.Vector3; update: () => void } | null;
-  };
-  const lastTarget = useRef<THREE.Vector3>(new THREE.Vector3());
-  const firstFrame = useRef<boolean>(true);
-
-  const desired = useMemo(() => {
-    if (target == null) return null;
-    if (target === 'sun') return [0, 0, 0] as [number, number, number];
-    if (target === 'ship') return spacecraftPosition;
-    const body = bodies.find((b) => b.id === target);
-    return body ? metersToSceneUnits(body.position) : null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, bodies, spacecraftPosition]);
-
-  // Reset the camera offset whenever the focus selection changes so the
-  // first frame after a re-target lands the camera at a sensible distance.
-  useEffect(() => {
-    firstFrame.current = true;
-  }, [target]);
-
-  useFrame(() => {
-    if (!desired || !controls) return;
-    const next = new THREE.Vector3(desired[0], desired[1], desired[2]);
-    if (firstFrame.current) {
-      // Translate camera by the same delta as the target so the user's
-      // pre-existing zoom and angle are preserved.
-      const dist = camera.position.distanceTo(controls.target);
-      const minDist = target === 'ship' ? 0.3 : target === 'sun' ? 1.5 : 0.6;
-      const useDist = Math.max(dist, minDist);
-      const dir = camera.position.clone().sub(controls.target).normalize();
-      camera.position.copy(next).addScaledVector(dir, useDist);
-      firstFrame.current = false;
-    } else {
-      const delta = next.clone().sub(controls.target);
-      camera.position.add(delta);
-    }
-    controls.target.copy(next);
-    lastTarget.current.copy(next);
-    controls.update();
-  });
-
-  return null;
 }

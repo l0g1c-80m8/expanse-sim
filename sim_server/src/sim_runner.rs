@@ -14,19 +14,18 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bevy_ecs::prelude::Entity;
 use parking_lot::Mutex;
 use sim_core::protocol::{
     apply_command, build_default_sim, snapshot, spawn_default_spacecraft, ControlCommand,
-    ResetParams, TelemetryFrame,
+    TelemetryFrame,
 };
-use sim_core::{SimClock, SimTime};
+use sim_core::{SimClock, SimConfig, SimTime};
 use tokio::sync::{broadcast, mpsc};
 
 /// Operator-facing settings provided at startup by `sim_server`'s CLI.
-/// The `dt` / `initial_warp` / `apply_gravity` triple is forwarded to the
-/// protocol layer's `ResetParams`; `telemetry_stride` and `loop_interval`
-/// are runner-specific.
+/// The dynamics knobs (dt, warp, gravity, default bodies) are projected
+/// into `SimConfig` for the protocol layer's `build_default_sim`;
+/// `telemetry_stride` and `loop_interval` are runner-specific.
 #[derive(Debug, Clone)]
 pub struct SimSettings {
     pub dt: f64,
@@ -37,11 +36,13 @@ pub struct SimSettings {
 }
 
 impl SimSettings {
-    fn reset_params(&self) -> ResetParams {
-        ResetParams {
+    fn sim_config(&self) -> SimConfig {
+        SimConfig {
             dt: self.dt,
-            initial_warp: self.initial_warp,
+            warp: self.initial_warp,
             apply_gravity: self.apply_gravity,
+            load_default_bodies: true,
+            ..Default::default()
         }
     }
 }
@@ -63,9 +64,9 @@ pub fn spawn_simulation(settings: SimSettings) -> AppState {
     let latest_pub = latest.clone();
 
     tokio::task::spawn_blocking(move || {
-        let reset_params = settings.reset_params();
-        let mut sim = build_default_sim(reset_params);
-        let mut spacecraft_id: Entity = spawn_default_spacecraft(&mut sim);
+        let sim_cfg = settings.sim_config();
+        let mut sim = build_default_sim(sim_cfg);
+        let mut spacecraft_id = spawn_default_spacecraft(&mut sim);
         let mut tick: u64 = 0;
         let mut budget: f64 = 0.0;
         let mut last = Instant::now();
@@ -83,7 +84,7 @@ pub fn spawn_simulation(settings: SimSettings) -> AppState {
             last = now;
 
             while let Ok(cmd) = command_rx.try_recv() {
-                apply_command(&mut sim, &mut spacecraft_id, cmd, reset_params);
+                apply_command(&mut sim, &mut spacecraft_id, cmd, sim_cfg);
             }
 
             let clock = *sim.world.resource::<SimClock>();

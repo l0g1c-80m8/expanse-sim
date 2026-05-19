@@ -41,19 +41,16 @@ pub struct CommandPacket {
 
 /// Top-level lockstep mode. The driver instantiates exactly one variant.
 #[derive(Resource)]
+#[derive(Default)]
 pub enum AutonomyBridge {
     /// No autonomy connected; the simulator runs free. Useful for tests and
     /// for the web dashboard's "demo" mode.
+    #[default]
     Disabled,
     #[cfg(feature = "zmq_bridge")]
     Zmq(zmq_impl::ZmqBridge),
 }
 
-impl Default for AutonomyBridge {
-    fn default() -> Self {
-        AutonomyBridge::Disabled
-    }
-}
 
 impl AutonomyBridge {
     /// Exchange one tick's telemetry for a command packet. Blocks if the
