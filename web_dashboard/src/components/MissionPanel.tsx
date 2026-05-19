@@ -14,10 +14,15 @@ interface Props {
   send: (cmd: ControlCommand) => void;
 }
 
+const TRANSIT_WARPS = [100, 1_000, 10_000, 100_000];
+
 export function MissionPanel({ mission, bodies, send }: Props) {
   // Sun isn't a useful source/target — exclude it from the picker.
   const choices = bodies.filter((b) => b.name !== 'Sun');
   const [accelG, setAccelG] = useState(1.0);
+  // High default so a 3-day Earth-Mars transit at 1g fits in ~26 seconds
+  // of wall time instead of 12 hours at the dashboard's idle 60× warp.
+  const [transitWarp, setTransitWarp] = useState(10_000);
 
   const update = (
     source: number | null,
@@ -82,6 +87,25 @@ export function MissionPanel({ mission, bodies, send }: Props) {
           </span>
         </label>
 
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 w-12">warp</span>
+          <div className="flex-1 flex gap-1">
+            {TRANSIT_WARPS.map((w) => (
+              <button
+                key={w}
+                onClick={() => setTransitWarp(w)}
+                className={`flex-1 py-1 rounded text-[10px] font-mono transition-colors ${
+                  transitWarp === w
+                    ? 'bg-cyan-500/25 text-cyan-100 border border-cyan-500/40'
+                    : 'border border-transparent text-slate-400 hover:bg-white/5'
+                }`}
+              >
+                {w >= 1000 ? `${w / 1000}k×` : `${w}×`}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <button
           onClick={() =>
             send({
@@ -89,11 +113,12 @@ export function MissionPanel({ mission, bodies, send }: Props) {
               source: mission.source ?? undefined,
               target: mission.target ?? undefined,
               accel_g: accelG,
+              warp: transitWarp,
             })
           }
           disabled={!ready}
           className="w-full flex items-center justify-center gap-2 bg-cyan-500/25 hover:bg-cyan-500/35 disabled:opacity-30 disabled:cursor-not-allowed border border-cyan-500/50 text-cyan-100 rounded-lg py-2 text-xs uppercase tracking-wider transition-colors"
-          title="Switch to Mission mode, stage at source, and engage autopilot in one shot"
+          title="Switch to Mission mode, stage at source, engage autopilot, and bump warp in one shot"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
           Plan &amp; Run

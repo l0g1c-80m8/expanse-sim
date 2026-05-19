@@ -73,11 +73,14 @@ pub enum ControlCommand {
     #[serde(rename = "set_mode")]
     SetMode { mode: String },
     /// One-shot mission kickoff: set mode → stage → engage in one transaction.
+    /// `warp` optionally bumps the time-warp at engagement so the operator
+    /// doesn't have to watch a 3-day transit at 60× warp.
     #[serde(rename = "start_mission")]
     StartMission {
         source: Option<i32>,
         target: Option<i32>,
         accel_g: Option<f64>,
+        warp: Option<f64>,
     },
     #[serde(rename = "set_nav_filter")]
     SetNavFilter {
@@ -529,7 +532,7 @@ pub fn apply_command(
                 }
             }
         }
-        ControlCommand::StartMission { source, target, accel_g } => {
+        ControlCommand::StartMission { source, target, accel_g, warp } => {
             if source.is_some() || target.is_some() {
                 if let Some(mut m) = sim.world.get_resource_mut::<Mission>() {
                     if let Some(s) = source { m.source_body = Some(s); }
@@ -545,6 +548,9 @@ pub fn apply_command(
                 if let Some(g) = accel_g {
                     ap.accel_g = g.max(0.0);
                 }
+            }
+            if let Some(w) = warp {
+                sim.set_warp(w.max(0.0));
             }
         }
         ControlCommand::Reset => {
@@ -625,6 +631,7 @@ mod tests {
                 source: Some(naif::EARTH),
                 target: Some(naif::MARS),
                 accel_g: Some(2.0),
+                warp: None,
             },
             params,
         );

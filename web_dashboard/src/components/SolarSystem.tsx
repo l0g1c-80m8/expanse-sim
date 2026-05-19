@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
-import { Html } from '@react-three/drei';
+import { useMemo, useState } from 'react';
+import { Html, Line } from '@react-three/drei';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   distanceAU,
@@ -33,12 +34,28 @@ const LABEL_COLORS: Record<string, string> = {
   Mercury: 'text-slate-400',
   Venus: 'text-amber-200',
   Earth: 'text-blue-300',
+  Luna: 'text-slate-300',
   Mars: 'text-red-300',
+  Phobos: 'text-orange-200',
+  Deimos: 'text-orange-200',
   Jupiter: 'text-amber-300',
   Saturn: 'text-yellow-300',
   Uranus: 'text-cyan-300',
   Neptune: 'text-blue-300',
 };
+
+/**
+ * Moons of the default body roster. Heliocentric orbit rings don't make
+ * sense for these (they orbit a planet, not the Sun) and their labels
+ * collide with the parent's at solar-system zooms.
+ */
+const MOON_PARENTS: Record<string, string> = {
+  Luna: 'Earth',
+  Phobos: 'Mars',
+  Deimos: 'Mars',
+};
+
+const isMoon = (name: string) => Object.prototype.hasOwnProperty.call(MOON_PARENTS, name);
 
 interface Props {
   bodies: BodySnapshot[];
@@ -47,6 +64,7 @@ interface Props {
   view: ViewSettings;
   nav?: NavEstimate | null;
   breadcrumbs?: Float32Array;
+  onBodyClick?: (bodyId: number) => void;
 }
 
 export function SolarSystem({
@@ -56,6 +74,7 @@ export function SolarSystem({
   view,
   nav,
   breadcrumbs,
+  onBodyClick,
 }: Props) {
   const source =
     mission?.source != null
@@ -81,6 +100,7 @@ export function SolarSystem({
               ? 'target'
               : null
           }
+          onClick={onBodyClick ? () => onBodyClick(b.id) : undefined}
         />
       ))}
 
@@ -105,28 +125,27 @@ export function SolarSystem({
 }
 
 function Breadcrumbs({ points }: { points: Float32Array }) {
-  // Convert each metres-triple into scene coords on the fly. The count
-  // changes every frame, so React reconciles by replacing the buffer.
-  const scenePoints = useMemo(() => {
-    const out = new Float32Array(points.length);
+  // Convert each metres-triple into a Vector3 tuple in scene coords. drei's
+  // <Line> uses meshline under the hood so `lineWidth` actually works
+  // (raw three.js `<line>` ignores width on most platforms).
+  const scenePoints = useMemo<[number, number, number][]>(() => {
+    if (points.length < 6) return [];
+    const out: [number, number, number][] = [];
     for (let i = 0; i < points.length; i += 3) {
-      out[i] = points[i] / AU;
-      out[i + 1] = points[i + 2] / AU;
-      out[i + 2] = -points[i + 1] / AU;
+      out.push([points[i] / AU, points[i + 2] / AU, -points[i + 1] / AU]);
     }
     return out;
   }, [points]);
+  if (scenePoints.length < 2) return null;
   return (
-    <line>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[scenePoints, 3]}
-          count={scenePoints.length / 3}
-        />
-      </bufferGeometry>
-      <lineBasicMaterial color="#22d3ee" transparent opacity={0.35} />
-    </line>
+    <Line
+      points={scenePoints}
+      color="#fb923c"
+      lineWidth={2.5}
+      transparent
+      opacity={0.8}
+      depthWrite={false}
+    />
   );
 }
 
@@ -139,19 +158,6 @@ function GhostShip({
 }) {
   const pos = metersToSceneUnits(nav.position);
   const truthPos = metersToSceneUnits(truth.position);
-  // Line from estimate → truth so the user sees the error vector.
-  const linePoints = useMemo(
-    () =>
-      new Float32Array([
-        pos[0],
-        pos[1],
-        pos[2],
-        truthPos[0],
-        truthPos[1],
-        truthPos[2],
-      ]),
-    [pos, truthPos],
-  );
   // 1-σ position uncertainty as a wireframe sphere around the estimate.
   // Clamp the visual radius so a wildly diverged filter doesn't swallow
   // the whole scene.
@@ -177,16 +183,14 @@ function GhostShip({
           </mesh>
         )}
       </group>
-      <line>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            args={[linePoints, 3]}
-            count={2}
-          />
-        </bufferGeometry>
-        <lineBasicMaterial color="#a78bfa" transparent opacity={0.6} />
-      </line>
+      <Line
+        points={[pos, truthPos]}
+        color="#a78bfa"
+        lineWidth={2}
+        transparent
+        opacity={0.9}
+        depthWrite={false}
+      />
     </group>
   );
 }
@@ -196,23 +200,45 @@ function Body({
   showOrbit,
   showLabel,
   highlight,
+  onClick,
 }: {
   body: BodySnapshot;
   showOrbit: boolean;
   showLabel: boolean;
   highlight: 'source' | 'target' | null;
+  onClick?: () => void;
 }) {
   const pos = metersToSceneUnits(body.position);
   const radius = visualRadius(body.name);
   const color = COLORS[body.name] ?? '#cbd5e1';
   const isSun = body.name === 'Sun';
+  const moon = isMoon(body.name);
   const distance = distanceAU(body.position);
   const highlightColor =
     highlight === 'source' ? '#34d399' : highlight === 'target' ? '#fb7185' : null;
 
+  // Hide moon labels when the camera is too far away for the moon to be
+  // angularly distinct from its parent. The threshold is a multiple of the
+  // body's visual radius — close in, you see "Luna"; zoomed out to the
+  // solar system, it's hidden so the planet's label stays readable.
+  const [labelVisible, setLabelVisible] = useState(!moon);
+  useFrame(({ camera }) => {
+    if (!moon) return;
+    const dx = camera.position.x - pos[0];
+    const dy = camera.position.y - pos[1];
+    const dz = camera.position.z - pos[2];
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    // Show the moon label when camera is within ~0.05 AU (Earth–Luna ≈
+    // 0.003 AU; this gives a comfortable zoom-in window).
+    const next = dist < 0.05;
+    if (next !== labelVisible) setLabelVisible(next);
+  });
+
   return (
     <group>
-      {showOrbit && !isSun && <OrbitRing radius={distance} color={color} />}
+      {/* Skip orbit rings for moons — they orbit a planet, not the Sun, so
+         a ring at their heliocentric radius is misleading clutter. */}
+      {showOrbit && !isSun && !moon && <OrbitRing radius={distance} color={color} />}
 
       <group position={pos}>
         {highlightColor && (
@@ -221,7 +247,22 @@ function Body({
             <meshBasicMaterial color={highlightColor} transparent opacity={0.9} />
           </mesh>
         )}
-        <mesh>
+        <mesh
+          onClick={(e) => {
+            if (!onClick) return;
+            e.stopPropagation();
+            onClick();
+          }}
+          onPointerOver={(e) => {
+            if (!onClick) return;
+            e.stopPropagation();
+            document.body.style.cursor = 'pointer';
+          }}
+          onPointerOut={() => {
+            if (!onClick) return;
+            document.body.style.cursor = '';
+          }}
+        >
           <sphereGeometry args={[radius, 48, 48]} />
           {isSun ? (
             <meshBasicMaterial color={color} toneMapped={false} />
@@ -248,11 +289,11 @@ function Body({
           </mesh>
         )}
 
-        {showLabel && (
+        {showLabel && labelVisible && (
           <Html
             position={[0, radius + 0.04, 0]}
             center
-            distanceFactor={isSun ? 10 : 6}
+            distanceFactor={isSun ? 10 : moon ? 1.2 : 6}
             zIndexRange={[10, 0]}
             style={{ pointerEvents: 'none', userSelect: 'none' }}
           >
@@ -284,27 +325,18 @@ function TransitLine({
 }) {
   const a = metersToSceneUnits(source.position);
   const b = metersToSceneUnits(target.position);
-  const points = useMemo(
-    () => new Float32Array([a[0], a[1], a[2], b[0], b[1], b[2]]),
-    [a, b],
-  );
   return (
-    <line>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[points, 3]}
-          count={2}
-        />
-      </bufferGeometry>
-      <lineDashedMaterial
-        color="#f472b6"
-        dashSize={0.15}
-        gapSize={0.12}
-        transparent
-        opacity={0.7}
-      />
-    </line>
+    <Line
+      points={[a, b]}
+      color="#f472b6"
+      lineWidth={2}
+      dashed
+      dashSize={0.2}
+      gapSize={0.12}
+      transparent
+      opacity={0.85}
+      depthWrite={false}
+    />
   );
 }
 
@@ -341,18 +373,16 @@ function TrajectoryLine({
   horizonSec: number;
 }) {
   // Forecast in metres → convert each sample into scene units (AU + axis swap).
-  const points = useMemo(() => {
+  const points = useMemo<[number, number, number][]>(() => {
     const raw = forecastTrajectory(
       spacecraft.position,
       spacecraft.velocity,
       horizonSec,
       400,
     );
-    const out = new Float32Array(raw.length);
+    const out: [number, number, number][] = [];
     for (let i = 0; i < raw.length; i += 3) {
-      out[i] = raw[i] / AU;
-      out[i + 1] = raw[i + 2] / AU;
-      out[i + 2] = -raw[i + 1] / AU;
+      out.push([raw[i] / AU, raw[i + 2] / AU, -raw[i + 1] / AU]);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -365,17 +395,19 @@ function TrajectoryLine({
     spacecraft.velocity[2],
     horizonSec,
   ]);
+  if (points.length < 2) return null;
   return (
-    <line>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[points, 3]}
-          count={points.length / 3}
-        />
-      </bufferGeometry>
-      <lineBasicMaterial color="#22d3ee" transparent opacity={0.5} />
-    </line>
+    <Line
+      points={points}
+      color="#22d3ee"
+      lineWidth={2}
+      dashed
+      dashSize={0.08}
+      gapSize={0.04}
+      transparent
+      opacity={0.9}
+      depthWrite={false}
+    />
   );
 }
 

@@ -141,6 +141,7 @@ export type ControlCommand =
       source?: number | null;
       target?: number | null;
       accel_g?: number;
+      warp?: number;
     }
   | {
       type: 'set_nav_filter';
